@@ -45,6 +45,42 @@ namespace {
 constexpr const char *kAgentName = "MarvellOdmNixlTestAgent";
 constexpr size_t kDefaultTransferSize = 65536;
 constexpr unsigned char kTestPattern = 0x33;
+constexpr int kMesonSkip = 77;
+
+void
+logOdmDeviceError(const std::string &path, const char *operation) {
+    const int err = errno;
+    switch (err) {
+    case ENOENT:
+        std::cerr << "ODM: " << operation << "(" << path
+                  << ") failed: device node not present (is the mrvl_cxl_pcie "
+                     "kernel module loaded?)"
+                  << std::endl;
+        break;
+    case EACCES:
+        std::cerr << "ODM: " << operation << "(" << path
+                  << ") failed: permission denied (check ODM char-device "
+                     "permissions)"
+                  << std::endl;
+        break;
+    case ENODEV:
+    case ENXIO:
+        std::cerr << "ODM: " << operation << "(" << path
+                  << ") failed: device present but not ready (driver loaded, "
+                     "hardware may be unavailable)"
+                  << std::endl;
+        break;
+    default:
+        std::cerr << "ODM: " << operation << "(" << path << ") failed: " << std::strerror(err)
+                  << std::endl;
+        break;
+    }
+}
+
+int
+odmDeviceFailureExitCode() {
+    return (errno == ENOENT) ? kMesonSkip : 1;
+}
 
 std::string
 devicePath(const std::string &dev_name) {
@@ -79,7 +115,7 @@ allocOdmIova(const std::string &dev_name, size_t transfer_size, OdmIovaAlloc &ou
     const std::string path = devicePath(dev_name);
     out.device_fd = open(path.c_str(), O_RDWR);
     if (out.device_fd < 0) {
-        std::cerr << "ODM: open(" << path << ") failed: " << std::strerror(errno) << std::endl;
+        logOdmDeviceError(path, "open");
         return false;
     }
 
@@ -275,14 +311,25 @@ main(int argc, char **argv) {
     }
 
     const std::string path = devicePath(dev_name);
-    if (access(path.c_str(), R_OK | W_OK) != 0) {
-        std::cerr << "Error: ODM device not accessible: " << path << ": " << std::strerror(errno)
-                  << std::endl;
+    if (access(path.c_str(), F_OK) != 0) {
+        logOdmDeviceError(path, "access");
+        if (errno == ENOENT) {
+            std::cout << "SKIP: ODM device not present at " << path << std::endl;
+            return kMesonSkip;
+        }
         return 1;
+    }
+    if (access(path.c_str(), R_OK | W_OK) != 0) {
+        logOdmDeviceError(path, "access");
+        return odmDeviceFailureExitCode();
     }
 
     if (!odm_addr_set) {
         if (!allocOdmIova(dev_name, transfer_size, odm_iova)) {
+            if (errno == ENOENT) {
+                std::cout << "SKIP: ODM device not present at " << path << std::endl;
+                return kMesonSkip;
+            }
             return 1;
         }
         odm_addr = odm_iova.addr;

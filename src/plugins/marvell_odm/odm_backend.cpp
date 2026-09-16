@@ -29,6 +29,37 @@
 
 #define ODM_DEFAULT_DMA_DEVICE "odm0"
 
+namespace {
+
+void
+logOdmDeviceOpenError(const std::string &device_path, const char *operation) {
+    const int err = errno;
+    switch (err) {
+    case ENOENT:
+        NIXL_ERROR << "ODM: " << operation << "(" << device_path
+                   << ") failed: device node not present (is the mrvl_cxl_pcie "
+                      "kernel module loaded?)";
+        break;
+    case EACCES:
+        NIXL_ERROR << "ODM: " << operation << "(" << device_path
+                   << ") failed: permission denied (check ODM char-device "
+                      "permissions)";
+        break;
+    case ENODEV:
+    case ENXIO:
+        NIXL_ERROR << "ODM: " << operation << "(" << device_path
+                   << ") failed: device present but not ready (driver loaded, "
+                      "hardware may be unavailable)";
+        break;
+    default:
+        NIXL_ERROR << "ODM: " << operation << "(" << device_path
+                   << ") failed: " << strerror(err);
+        break;
+    }
+}
+
+} // namespace
+
 /* 64KB-aligned, < UINT32_MAX: the FD ioctl carries a u32 transfer size and the
  * GPU dma-buf export wants 64KB-aligned ranges. */
 static constexpr uint64_t ODM_MAX_FD_CHUNK = 0xFFFF0000ULL;
@@ -109,6 +140,12 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
     /* Accept either a bare device name (resolved under /dev) or an absolute
      * path (useful when the ODM char device lives elsewhere, or for testing). */
     device_path_ = (!dev_name.empty() && dev_name[0] == '/') ? dev_name : ("/dev/" + dev_name);
+
+    if (access(device_path_.c_str(), F_OK) != 0) {
+        logOdmDeviceOpenError(device_path_, "access");
+        initErr = true;
+        return;
+    }
 
     /*
      * Hard requirements: ODM has NO fallback path. If CUDA with GPUDirect is
@@ -221,7 +258,7 @@ nixlOdmEngine::openDevice() {
     }
     dma_fd_ = open(device_path_.c_str(), O_RDWR);
     if (dma_fd_ < 0) {
-        NIXL_ERROR << "ODM: open(" << device_path_ << ") failed: " << strerror(errno);
+        logOdmDeviceOpenError(device_path_, "open");
         return NIXL_ERR_BACKEND;
     }
     return NIXL_SUCCESS;

@@ -40,6 +40,34 @@ constexpr uint64_t kCxlCapUnitBytes = 256ULL * 1024 * 1024;
 constexpr size_t kCxlIdentifyPayloadSize = 0x43;
 constexpr size_t kCxlIdentifyTotalCapOffset = 0x10;
 constexpr size_t kCxlIdentifyPersistentCapOffset = 0x20;
+
+void
+logOdmDeviceOpenError(const std::string &device_path, const char *operation) {
+    const int err = errno;
+    switch (err) {
+    case ENOENT:
+        std::cerr << "ODM: " << operation << "(" << device_path
+                  << ") failed: device node not present (is the mrvl_cxl_pcie "
+                     "kernel module loaded?)" << std::endl;
+        break;
+    case EACCES:
+        std::cerr << "ODM: " << operation << "(" << device_path
+                  << ") failed: permission denied (check ODM char-device "
+                     "permissions)" << std::endl;
+        break;
+    case ENODEV:
+    case ENXIO:
+        std::cerr << "ODM: " << operation << "(" << device_path
+                  << ") failed: device present but not ready (driver loaded, "
+                     "hardware may be unavailable)" << std::endl;
+        break;
+    default:
+        std::cerr << "ODM: " << operation << "(" << device_path
+                  << ") failed: " << strerror(err) << std::endl;
+        break;
+    }
+}
+
 bool
 odmIoctlSizeOk(size_t size) {
     if (size > UINT32_MAX) {
@@ -222,8 +250,7 @@ State::discoverBaseAddr() {
 
     iova_fd_ = open(odm_dev.c_str(), O_RDWR);
     if (iova_fd_ < 0) {
-        std::cerr << "ODM: open(" << odm_dev << ") for GET_IOVA failed: " << strerror(errno)
-                  << std::endl;
+        logOdmDeviceOpenError(odm_dev, "open");
         exit(EXIT_FAILURE);
     }
     if (!odmIoctlSizeOk(xferBenchConfig::total_buffer_size)) {
@@ -236,7 +263,8 @@ State::discoverBaseAddr() {
     struct mrvl_dma_iova_commands iova_cmd{};
     iova_cmd.target_iova_size = static_cast<uint32_t>(xferBenchConfig::total_buffer_size);
     if (ioctl(iova_fd_, MRVL_CXL_GET_IOVA_COMMAND, &iova_cmd) < 0) {
-        std::cerr << "ODM: GET_IOVA failed: " << strerror(errno) << std::endl;
+        std::cerr << "ODM: GET_IOVA on " << odm_dev << " failed: " << strerror(errno)
+                  << " (set ODM_ADDR to bypass GET_IOVA)" << std::endl;
         close(iova_fd_);
         iova_fd_ = -1;
         exit(EXIT_FAILURE);
