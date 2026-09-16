@@ -32,6 +32,8 @@ memTypeStr(const nixl_mem_t &mem) {
         return "BLK_SEG";
     case OBJ_SEG:
         return "OBJ_SEG";
+    case ODM_MEM_SEG:
+        return "ODM_MEM_SEG";
     case FILE_SEG:
         return "FILE_SEG";
     }

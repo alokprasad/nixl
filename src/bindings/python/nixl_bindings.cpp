@@ -233,6 +233,7 @@ PYBIND11_MODULE(_bindings, m) {
         .value("BLK_SEG", BLK_SEG)
         .value("OBJ_SEG", OBJ_SEG)
         .value("FILE_SEG", FILE_SEG)
+        .value("ODM_MEM_SEG", ODM_MEM_SEG)
         .export_values();
 
     py::enum_<nixl_xfer_op_t>(m, "nixl_xfer_op_t")
