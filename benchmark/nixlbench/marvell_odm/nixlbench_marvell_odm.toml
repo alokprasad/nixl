@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 Marvell Technology, Inc. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Complete nixlbench configuration for MARVELL_ODM backend
 #
 # Usage from nixlbench build directory:
