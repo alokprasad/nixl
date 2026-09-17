@@ -838,6 +838,7 @@ nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
     (void)req;
     return NIXL_ERR_NOT_SUPPORTED;
 #else
+    std::lock_guard<std::mutex> uring_lk(uring_mtx_);
     nixl_status_t cst = ensureCudaContext(req->gpu_id);
     if (cst != NIXL_SUCCESS) {
         return cst;

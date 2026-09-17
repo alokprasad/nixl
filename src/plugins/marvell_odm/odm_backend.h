@@ -232,6 +232,12 @@ private:
 
     mutable struct io_uring uring_;
     bool use_io_uring_{false};
+    /*
+     * liburing rings are not thread-safe. nixlbench posts from many threads on
+     * one engine; without this gate concurrent submit/wait corrupts the ring
+     * and surfaces as uring_cmd EBADF under multi-thread block-size sweeps.
+     */
+    mutable std::mutex uring_mtx_;
 #endif
 
 #ifdef HAVE_CUDA
