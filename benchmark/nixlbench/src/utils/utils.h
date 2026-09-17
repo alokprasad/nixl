@@ -15,15 +15,14 @@
  * limitations under the License.
  */
 
-#ifndef NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_UTILS_H
-#define NIXL_BENCHMARK_NIXLBENCH_SRC_UTILS_UTILS_H
+#ifndef NIXL_BENCHMARK_UTILS_H
+#define NIXL_BENCHMARK_UTILS_H
 
 #include "config.h"
 #include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 #include <optional>
@@ -36,47 +35,34 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                       \
-    do {                                                                        \
-        const auto _r = (result);                                               \
-        if (_r != cudaSuccess) {                                                \
-            std::cerr << "CUDA: " << message << " (Error code: " << _r << " - " \
-                      << cudaGetErrorString(_r) << ")" << std::endl;            \
-            exit(EXIT_FAILURE);                                                 \
-        }                                                                       \
-    } while (0)
-
-#define CHECK_CUDA_DRIVER_ERROR(result, message)                                       \
+#define CHECK_CUDA_ERROR(result, message)                                              \
     do {                                                                               \
-        const auto _r = (result);                                                      \
-        if (_r != CUDA_SUCCESS) {                                                      \
-            const char *error_str;                                                     \
-            cuGetErrorString(_r, &error_str);                                          \
-            std::cerr << "CUDA Driver: " << message << " (Error code: " << _r << " - " \
-                      << error_str << ")" << std::endl;                                \
+        const cudaError_t _cuda_err = (result);                                        \
+        if (_cuda_err != cudaSuccess) {                                                \
+            std::cerr << "CUDA: " << message << " (Error code: " << _cuda_err << " - " \
+                      << cudaGetErrorString(_cuda_err) << ")" << std::endl;            \
             exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     } while (0)
-#elif HAVE_ROCM
-#include <hip/hip_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                      \
-    do {                                                                       \
-        const auto _r = (result);                                              \
-        if (_r != hipSuccess) {                                                \
-            std::cerr << "HIP: " << message << " (Error code: " << _r << " - " \
-                      << hipGetErrorString(_r) << ")" << std::endl;            \
-            exit(EXIT_FAILURE);                                                \
-        }                                                                      \
+#define CHECK_CUDA_DRIVER_ERROR(result, message)                                                  \
+    do {                                                                                          \
+        const CUresult _cuda_drv_err = (result);                                                  \
+        if (_cuda_drv_err != CUDA_SUCCESS) {                                                      \
+            const char *error_str;                                                                \
+            cuGetErrorString(_cuda_drv_err, &error_str);                                          \
+            std::cerr << "CUDA Driver: " << message << " (Error code: " << _cuda_drv_err << " - " \
+                      << error_str << ")" << std::endl;                                           \
+            exit(EXIT_FAILURE);                                                                   \
+        }                                                                                         \
     } while (0)
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
 #define MAXBW 50.0 // 400 Gbps or 50 GB/sec
 #define LARGE_BLOCK_SIZE (1LL * (1 << 20))
-#define HUGEPAGE_SIZE (2 * 1024 * 1024)
-#define ROUND_UP(value, granularity) \
-    ((((value) + (granularity) - 1) / (granularity)) * (granularity))
+#define HUGEPAGE_SIZE (2ULL * 1024 * 1024)
+#define ROUND_UP(val, align) (((val) + (align) - 1) & ~((align) - 1))
 
 #define XFERBENCH_INITIATOR_BUFFER_ELEMENT 0xbb
 #define XFERBENCH_TARGET_BUFFER_ELEMENT 0xaa
@@ -102,6 +88,7 @@
 #define XFERBENCH_BACKEND_UCCL "UCCL"
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
+#define XFERBENCH_BACKEND_MARVELL_ODM "MARVELL_ODM"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -141,14 +128,14 @@
 #define XFERBENCH_SEG_TYPE_VRAM "VRAM"
 #define XFERBENCH_SEG_TYPE_BLK "BLK"
 
-// Worker types
-#define XFERBENCH_WORKER_NIXL "nixl"
-#define XFERBENCH_WORKER_NVSHMEM "nvshmem"
-
-// Randomization location modes
+// Randomize-location modes (must match --randomize_location_mode flag values)
 #define XFERBENCH_RANDOMIZE_LOCATION_MODE_NONE "none"
 #define XFERBENCH_RANDOMIZE_LOCATION_MODE_BLOCK_ALIGNED "blockaligned"
 #define XFERBENCH_RANDOMIZE_LOCATION_MODE_BYTE_ALIGNED "bytealigned"
+
+// Worker types
+#define XFERBENCH_WORKER_NIXL "nixl"
+#define XFERBENCH_WORKER_NVSHMEM "nvshmem"
 
 #define IS_PAIRWISE_AND_SG()                                 \
     (XFERBENCH_SCHEME_PAIRWISE == xferBenchConfig::scheme && \
@@ -168,6 +155,8 @@ public:
     static std::string mode;
     static std::string op_type;
     static bool check_consistency;
+    static int check_value;
+    static int fill_value;
     static size_t total_buffer_size;
     static bool recreate_xfer;
     static int num_initiator_dev;
@@ -184,8 +173,8 @@ public:
     static size_t progress_threads;
     static std::string device_list;
     static std::string etcd_endpoints;
-    static std::string asio_address; // IPv4
-    static uint16_t asio_port;
+    static std::string asio_address;
+    static std::uint16_t asio_port;
     static std::string randomize_location_mode;
     static uint64_t randomize_location_mode_seed;
     static std::string benchmark_group;
@@ -193,14 +182,14 @@ public:
     static std::string filenames;
     static bool enable_vmm;
     static bool use_hugepages;
+    static bool reregister_mem;
+    static bool prepared_xfer;
+    static int pipeline_depth;
     static int num_files;
     static std::string posix_api_type;
     static int posix_ios_pool_size;
     static int posix_kernel_queue_size;
     static bool storage_enable_direct;
-    static bool reregister_mem;
-    static bool prepared_xfer;
-    static int pipeline_depth;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;
@@ -244,6 +233,11 @@ public:
     /* Parallel workers split iterations across both CPU and Device API. */
     static int
     workerNum();
+
+    static std::string odm_device_path;
+    static bool odm_use_io_uring;
+    static int odm_qid_start;
+    static int odm_qid_end;
 
     static int
     parseConfig(int argc, char *argv[]);
@@ -423,4 +417,11 @@ public:
     printStats(bool is_target, size_t block_size, size_t batch_size, xferBenchStats stats);
 };
 
-#endif
+inline uint8_t
+xferBenchInitiatorFillByte() {
+    return (xferBenchConfig::fill_value >= 0) ?
+        static_cast<uint8_t>(xferBenchConfig::fill_value) :
+        static_cast<uint8_t>(XFERBENCH_INITIATOR_BUFFER_ELEMENT);
+}
+
+#endif // NIXL_BENCHMARK_UTILS_H
