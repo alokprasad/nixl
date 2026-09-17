@@ -52,7 +52,7 @@
  * @brief Memory types supported by the ODM backend.
  *
  * VRAM_SEG <-> ODM_MEM_SEG: ODM DMA controller via dma-buf for both directions
- * (ODM device memory <-> GPU VRAM). VRAM is exported with cuMemGetHandleForAddressRange;
+ * (Structera device memory <-> GPU VRAM). VRAM is exported with cuMemGetHandleForAddressRange;
  * CUDA is required only for VRAM dma-buf export.
  */
 inline nixl_mem_list_t

@@ -42,9 +42,9 @@ struct mrvl_dma_xfer_commands_fd {
     uint16_t qid;
 };
 
-/* GPU dma-buf -> ODM device memory (write into device). */
+/* GPU dma-buf -> Structera device memory (write into device). */
 #define MRVL_CXL_DMA_WRITE_COMMAND_FD _IOWR(ODM_IOCTL_MAGIC, 10, struct mrvl_dma_xfer_commands_fd)
-/* ODM device memory -> GPU dma-buf (read from device). */
+/* Structera device memory -> GPU dma-buf (read from device). */
 #define MRVL_CXL_DMA_READ_COMMAND_FD _IOWR(ODM_IOCTL_MAGIC, 13, struct mrvl_dma_xfer_commands_fd)
 
 /*
