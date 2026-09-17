@@ -870,14 +870,19 @@ single-instance runs.
 export LD_LIBRARY_PATH=.../build/src/core:.../build/src/plugins/marvell_odm
 export NIXL_PLUGIN_DIR=.../build/src/plugins/marvell_odm
 export ODM_ADDR=0x800000000   # when GET_IOVA is unavailable
+# insmod mrvl_cxl_pcie.ko odm_use_io_uring=1   # kernel module io_uring path
 
-# Basic WRITE benchmark
+# Basic WRITE benchmark (io_uring + queues 0..15, 8 threads)
 ./nixlbench \
   --backend MARVELL_ODM \
   --device_list odm0 \
   --initiator_seg_type VRAM \
   --target_seg_type DRAM \
   --op_type WRITE \
+  --odm_use_io_uring \
+  --odm_qid_start 0 \
+  --odm_qid_end 15 \
+  --num_threads 8 \
   --total_buffer_size 8589934592 \
   --start_block_size 4096 \
   --max_block_size 33554432 \

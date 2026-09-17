@@ -27,9 +27,6 @@
 
 namespace xferBenchOdm {
 
-constexpr int kQidStart = 0;
-constexpr int kQidEnd = 7;
-
 struct State {
     std::string device_path_;
     uint64_t base_addr_ = 0;

@@ -174,15 +174,16 @@ validatePattern(const void *buf, size_t len, unsigned char expected) {
 void
 printUsage(const char *prog) {
     std::cerr << "Usage: " << prog << " [options]\n"
-              << "  --device NAME       ODM device name (default: odm0)\n"
-              << "  --qid ID            ODM queue id (default: 0)\n"
-              << "  --qid-start ID      ODM queue range start (default: --qid)\n"
-              << "  --qid-end ID        ODM queue range end (default: --qid)\n"
-              << "  --odm-addr ADDR     ODM target IOVA (default: GET_IOVA / ODM_ADDR)\n"
-              << "  --size BYTES        Transfer size (default: " << kDefaultTransferSize << ")\n"
-              << "  --pattern BYTE      Fill/verify byte pattern (default: 0x33)\n"
-              << "  --io-uring          Use io_uring kernel-side queue spray for transfers\n"
-              << "  --help              Show this help\n"
+              << "  --device NAME           ODM device name (default: odm0)\n"
+              << "  --qid ID                ODM queue id (sets start/end when range unset)\n"
+              << "  --odm_qid_start ID      ODM queue range start (default: 0)\n"
+              << "  --odm_qid_end ID        ODM queue range end (default: 15)\n"
+              << "  --odm-addr ADDR         ODM target IOVA (default: GET_IOVA / ODM_ADDR)\n"
+              << "  --size BYTES            Transfer size (default: " << kDefaultTransferSize
+              << ")\n"
+              << "  --pattern BYTE          Fill/verify byte pattern (default: 0x33)\n"
+              << "  --odm_use_io_uring      Use io_uring kernel-side queue spray for transfers\n"
+              << "  --help                  Show this help\n"
               << "\n"
               << "Runs a VRAM -> ODM write followed by an ODM -> VRAM read and validates\n"
               << "the round-trip from GPU memory.\n";
@@ -215,9 +216,11 @@ main(int argc, char **argv) {
     bool odm_addr_set = false;
     OdmIovaAlloc odm_iova{};
     std::string dev_name = "odm0";
-    std::string qid_str = "0";
-    std::string qid_start_str;
-    std::string qid_end_str;
+    std::string qid_str;
+    std::string qid_start_str = "0";
+    std::string qid_end_str = "15";
+    bool qid_start_set = false;
+    bool qid_end_set = false;
     uint64_t odm_addr = 0;
     size_t transfer_size = kDefaultTransferSize;
     unsigned char test_pattern = kTestPattern;
@@ -226,12 +229,12 @@ main(int argc, char **argv) {
     static struct option long_opts[] = {
         {"device", required_argument, nullptr, 'D'},
         {"qid", required_argument, nullptr, 'q'},
-        {"qid-start", required_argument, nullptr, 'Q'},
-        {"qid-end", required_argument, nullptr, 'R'},
+        {"odm_qid_start", required_argument, nullptr, 'Q'},
+        {"odm_qid_end", required_argument, nullptr, 'R'},
         {"odm-addr", required_argument, nullptr, 'a'},
         {"size", required_argument, nullptr, 's'},
         {"pattern", required_argument, nullptr, 'p'},
-        {"io-uring", no_argument, nullptr, 'u'},
+        {"odm_use_io_uring", no_argument, nullptr, 'u'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0},
     };
@@ -247,9 +250,11 @@ main(int argc, char **argv) {
             break;
         case 'Q':
             qid_start_str = optarg;
+            qid_start_set = true;
             break;
         case 'R':
             qid_end_str = optarg;
+            qid_end_set = true;
             break;
         case 'a': {
             char *end = nullptr;
@@ -297,11 +302,13 @@ main(int argc, char **argv) {
         }
     }
 
-    if (qid_start_str.empty()) {
-        qid_start_str = qid_str;
-    }
-    if (qid_end_str.empty()) {
-        qid_end_str = qid_str;
+    if (!qid_str.empty()) {
+        if (!qid_start_set) {
+            qid_start_str = qid_str;
+        }
+        if (!qid_end_set) {
+            qid_end_str = qid_str;
+        }
     }
 
     int device_count = 0;

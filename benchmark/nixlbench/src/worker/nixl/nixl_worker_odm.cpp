@@ -140,20 +140,27 @@ configureBackend(const std::vector<std::string> &devices,
     const std::string odm_device = (devices.empty() || devices[0] == "all") ? "odm0" : devices[0];
     backend_params["dmadev_param"] = odm_device;
     state.device_path_ = (odm_device[0] == '/') ? odm_device : ("/dev/" + odm_device);
-    backend_params["odm_qid"] = std::to_string(kQidStart);
-    backend_params["odm_qid_start"] = std::to_string(kQidStart);
-    backend_params["odm_qid_end"] = std::to_string(kQidEnd);
+    backend_params["odm_qid"] = std::to_string(xferBenchConfig::odm_qid_start);
+    backend_params["odm_qid_start"] = std::to_string(xferBenchConfig::odm_qid_start);
+    backend_params["odm_qid_end"] = std::to_string(xferBenchConfig::odm_qid_end);
     backend_params["num_threads"] = std::to_string(xferBenchConfig::num_threads);
-    if (const char *uring_env = getenv("ODM_USE_IO_URING")) {
-        if (uring_env[0] == '1' || strcasecmp(uring_env, "true") == 0 ||
-            strcasecmp(uring_env, "yes") == 0) {
-            backend_params["odm_use_io_uring"] = "1";
+    bool use_io_uring = xferBenchConfig::odm_use_io_uring;
+    if (!use_io_uring) {
+        if (const char *uring_env = getenv("ODM_USE_IO_URING")) {
+            if (uring_env[0] == '1' || strcasecmp(uring_env, "true") == 0 ||
+                strcasecmp(uring_env, "yes") == 0) {
+                use_io_uring = true;
+            }
         }
     }
-    std::cout << "MARVELL_ODM backend: dma_device=" << odm_device << " qid=" << kQidStart
-              << " qid_range=" << kQidStart << ".." << kQidEnd
-              << " threads=" << xferBenchConfig::num_threads
-              << " io_uring=" << (backend_params.count("odm_use_io_uring") ? "on" : "off")
+    if (use_io_uring) {
+        backend_params["odm_use_io_uring"] = "1";
+    }
+    std::cout << "MARVELL_ODM backend: dma_device=" << odm_device
+              << " qid=" << xferBenchConfig::odm_qid_start
+              << " qid_range=" << xferBenchConfig::odm_qid_start << ".."
+              << xferBenchConfig::odm_qid_end << " threads=" << xferBenchConfig::num_threads
+              << " io_uring=" << (use_io_uring ? "on" : "off")
               << " engine=ODM/dma-buf (both directions)"
               << " addr=auto(GET_IOVA/$ODM_ADDR)" << std::endl;
 }

@@ -235,6 +235,9 @@ public:
     workerNum();
 
     static std::string odm_device_path;
+    static bool odm_use_io_uring;
+    static int odm_qid_start;
+    static int odm_qid_end;
 
     static int
     parseConfig(int argc, char *argv[]);

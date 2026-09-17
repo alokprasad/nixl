@@ -63,7 +63,7 @@ export ODM_ADDR=0x800000000   # use when GET_IOVA is unavailable
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `ODM_ADDR` | Fixed device IOVA when `GET_IOVA` fails or times out | `0x800000000` |
-| `ODM_USE_IO_URING` | Enable io_uring submit path in the plugin | `1` |
+| `ODM_USE_IO_URING` | Enable io_uring submit path (fallback if `--odm_use_io_uring` unset) | `1` |
 | `NIXL_PLUGIN_DIR` | Directory containing `libplugin_MARVELL_ODM.so` | `build/src/plugins/marvell_odm` |
 
 ### nixlbench CLI Flags
@@ -77,14 +77,18 @@ export ODM_ADDR=0x800000000   # use when GET_IOVA is unavailable
 | `--op_type` | Transfer direction | `WRITE` or `READ` |
 | `--check_consistency` | Verify data after WRITE | `0` or `1` |
 | `--total_buffer_size` | Registered buffer size (bytes) | `8589934592` |
+| `--odm_use_io_uring` | Enable io_uring `uring_cmd` submit path | off |
+| `--odm_qid_start` | First ODM queue ID | `0` |
+| `--odm_qid_end` | Last ODM queue ID | `15` |
+| `--num_threads` | Benchmark worker threads | `1` |
 
 ### Plugin Parameters (via backend init)
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `odm_qid_start` | First ODM queue ID | `0` |
-| `odm_qid_end` | Last ODM queue ID | `7` |
-| `odm_use_io_uring` | Use io_uring `uring_cmd` submit | off |
+| `odm_qid_start` | First ODM queue ID | `0` (from `--odm_qid_start`) |
+| `odm_qid_end` | Last ODM queue ID | `15` (from `--odm_qid_end`) |
+| `odm_use_io_uring` | Use io_uring `uring_cmd` submit | off (from `--odm_use_io_uring`) |
 
 ## Consistency Checking
 

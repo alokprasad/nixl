@@ -48,7 +48,7 @@ SQE128 rings are used when supported by the kernel and liburing.
 | `dmadev_param` | ODM device name or path | `odm0` |
 | `odm_qid` | Primary queue ID | `0` |
 | `odm_qid_start` | First queue in range | `0` |
-| `odm_qid_end` | Last queue in range | `7` |
+| `odm_qid_end` | Last queue in range | `15` (nixlbench default) |
 | `odm_use_io_uring` | Enable io_uring submit | off |
 | `num_threads` | Worker thread count | `1` |
 
@@ -77,7 +77,8 @@ ninja -C build test/unit/plugins/marvell_odm/marvell_odm_nixl_test
 
 # With io_uring:
 ./build/test/unit/plugins/marvell_odm/marvell_odm_nixl_test \
-  --device odm0 --odm-addr 0x800000000 --io-uring
+  --device odm0 --odm-addr 0x800000000 --odm_use_io_uring \
+  --odm_qid_start 0 --odm_qid_end 15
 ```
 
 Register in meson test suite with `-Denable_odm_hw_tests=true` when hardware is

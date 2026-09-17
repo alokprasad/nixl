@@ -128,6 +128,13 @@ NB_ARG_INT32(gds_batch_pool_size,
 NB_ARG_INT32(gds_batch_limit, 128, "Batch limit for GDS operations (only used with GDS backend)");
 NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin");
 
+// MARVELL_ODM options - only used when backend is MARVELL_ODM
+NB_ARG_BOOL(odm_use_io_uring,
+            false,
+            "Enable ODM io_uring uring_cmd submit path (only used with MARVELL_ODM backend)");
+NB_ARG_INT32(odm_qid_start, 0, "First ODM queue id (only used with MARVELL_ODM backend)");
+NB_ARG_INT32(odm_qid_end, 15, "Last ODM queue id (only used with MARVELL_ODM backend)");
+
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
 // For example- 0:mlx5_0,mlx5_1,mlx5_2,1:mlx5_3,mlx5_4, ...
@@ -449,6 +456,9 @@ setupDeviceAPIConfig() {
 }
 
 std::string xferBenchConfig::odm_device_path = "/dev/odm0";
+bool xferBenchConfig::odm_use_io_uring = false;
+int xferBenchConfig::odm_qid_start = 0;
+int xferBenchConfig::odm_qid_end = 15;
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -538,6 +548,18 @@ xferBenchConfig::loadParams(void) {
 
         if (backend == XFERBENCH_BACKEND_GDS_MT) {
             gds_mt_num_threads = NB_ARG(gds_mt_num_threads);
+        }
+
+        if (backend == XFERBENCH_BACKEND_MARVELL_ODM) {
+            odm_use_io_uring = NB_ARG(odm_use_io_uring);
+            odm_qid_start = NB_ARG(odm_qid_start);
+            odm_qid_end = NB_ARG(odm_qid_end);
+            if (odm_qid_start < 0 || odm_qid_end < odm_qid_start) {
+                std::cerr << "Invalid ODM queue range: --odm_qid_start=" << odm_qid_start
+                          << " --odm_qid_end=" << odm_qid_end
+                          << " (require 0 <= start <= end)" << std::endl;
+                return -1;
+            }
         }
 
         // Load POSIX-specific configurations if backend is POSIX
@@ -962,7 +984,10 @@ xferBenchConfig::printConfig() {
         }
         if (backend == XFERBENCH_BACKEND_MARVELL_ODM) {
             printOption("ODM base addr", "auto (GET_IOVA) / $ODM_ADDR");
-            printOption("ODM queues", "0..7 (default in nixlbench)");
+            printOption("ODM io_uring (--odm_use_io_uring=[0,1])",
+                        std::to_string(odm_use_io_uring));
+            printOption("ODM queue start (--odm_qid_start=N)", std::to_string(odm_qid_start));
+            printOption("ODM queue end (--odm_qid_end=N)", std::to_string(odm_qid_end));
             printOption("ODM engine", "ODM controller + dma-buf (both directions)");
         }
 
