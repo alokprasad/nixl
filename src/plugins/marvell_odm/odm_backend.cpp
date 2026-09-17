@@ -52,8 +52,7 @@ logOdmDeviceOpenError(const std::string &device_path, const char *operation) {
                       "hardware may be unavailable)";
         break;
     default:
-        NIXL_ERROR << "ODM: " << operation << "(" << device_path
-                   << ") failed: " << strerror(err);
+        NIXL_ERROR << "ODM: " << operation << "(" << device_path << ") failed: " << strerror(err);
         break;
     }
 }

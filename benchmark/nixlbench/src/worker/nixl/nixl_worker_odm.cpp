@@ -48,22 +48,25 @@ logOdmDeviceOpenError(const std::string &device_path, const char *operation) {
     case ENOENT:
         std::cerr << "ODM: " << operation << "(" << device_path
                   << ") failed: device node not present (is the mrvl_cxl_pcie "
-                     "kernel module loaded?)" << std::endl;
+                     "kernel module loaded?)"
+                  << std::endl;
         break;
     case EACCES:
         std::cerr << "ODM: " << operation << "(" << device_path
                   << ") failed: permission denied (check ODM char-device "
-                     "permissions)" << std::endl;
+                     "permissions)"
+                  << std::endl;
         break;
     case ENODEV:
     case ENXIO:
         std::cerr << "ODM: " << operation << "(" << device_path
                   << ") failed: device present but not ready (driver loaded, "
-                     "hardware may be unavailable)" << std::endl;
+                     "hardware may be unavailable)"
+                  << std::endl;
         break;
     default:
-        std::cerr << "ODM: " << operation << "(" << device_path
-                  << ") failed: " << strerror(err) << std::endl;
+        std::cerr << "ODM: " << operation << "(" << device_path << ") failed: " << strerror(err)
+                  << std::endl;
         break;
     }
 }
