@@ -36,15 +36,15 @@
  */
 struct mrvl_dma_xfer_commands_fd {
     uint32_t dmabuf_fd; /* exported GPU VRAM dma-buf file descriptor */
-    uint64_t target_iova_addr; /* Iliad/Structera device-local IOVA */
+    uint64_t target_iova_addr; /* ODM device-local IOVA */
     uint32_t tranfer_size;
     uint32_t tranfer_type; /* ODM_XTYPE_INBOUND or ODM_XTYPE_OUTBOUND */
     uint16_t qid;
 };
 
-/* GPU dma-buf -> Iliad device memory (write into device). */
+/* GPU dma-buf -> ODM device memory (write into device). */
 #define MRVL_CXL_DMA_WRITE_COMMAND_FD _IOWR(ODM_IOCTL_MAGIC, 10, struct mrvl_dma_xfer_commands_fd)
-/* Iliad device memory -> GPU dma-buf (read from device). */
+/* ODM device memory -> GPU dma-buf (read from device). */
 #define MRVL_CXL_DMA_READ_COMMAND_FD _IOWR(ODM_IOCTL_MAGIC, 13, struct mrvl_dma_xfer_commands_fd)
 
 /*
@@ -89,7 +89,7 @@ struct mrvl_dma_iova_commands {
 #define MRVL_CXL_FREE_IOVA_COMMAND _IOWR(ODM_IOCTL_MAGIC, 6, struct mrvl_dma_iova_commands)
 
 /* ODM transfer direction (relative to the GPU). */
-#define ODM_DIR_TO_GPU 0 /* Iliad device -> GPU VRAM (READ_FD)  */
-#define ODM_DIR_FROM_GPU 1 /* GPU VRAM -> Iliad device (WRITE_FD) */
+#define ODM_DIR_TO_GPU 0 /* ODM device -> GPU VRAM (READ_FD)  */
+#define ODM_DIR_FROM_GPU 1 /* GPU VRAM -> ODM device (WRITE_FD) */
 
 #endif /* NIXL_SRC_PLUGINS_ODM_ODM_IOCTL_H */

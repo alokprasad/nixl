@@ -408,16 +408,16 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
     auto *req = new nixlOdmBackendReqH();
 
     /* Destination side decides direction (mirrors the ODM plugin):
-     *   data into VRAM (Iliad -> VRAM)  => ODM_DIR_TO_GPU  (READ_FD)
-     *   data into ODM  (VRAM -> Iliad)  => ODM_DIR_FROM_GPU (WRITE_FD) */
+     *   data into VRAM (ODM -> VRAM)  => ODM_DIR_TO_GPU  (READ_FD)
+     *   data into ODM  (VRAM -> ODM)  => ODM_DIR_FROM_GPU (WRITE_FD) */
     bool dest_is_vram = (operation == NIXL_READ) ? (lt == VRAM_SEG) : (rt == VRAM_SEG);
     req->direction = dest_is_vram ? ODM_DIR_TO_GPU : ODM_DIR_FROM_GPU;
     req->gpu_id = static_cast<uint32_t>((lt == VRAM_SEG) ? local[0].devId : remote[0].devId);
 
     NIXL_DEBUG << "ODM prepXfer: VRAM<->ODM op=" << (operation == NIXL_READ ? "READ" : "WRITE")
                << " -> "
-               << (req->direction == ODM_DIR_TO_GPU ? "READ_FD (Iliad->VRAM)" :
-                                                      "WRITE_FD (VRAM->Iliad)")
+               << (req->direction == ODM_DIR_TO_GPU ? "READ_FD (ODM->VRAM)" :
+                                                      "WRITE_FD (VRAM->ODM)")
                << " segments=" << n;
 
     /*
@@ -665,8 +665,8 @@ nixlOdmEngine::odmDoWork(const OdmWork &w) const {
         cmd.qid = w.qid;
 
         NIXL_DEBUG << "ODM ioctl "
-                   << (w.ioctl_cmd == MRVL_CXL_DMA_READ_COMMAND_FD ? "READ_FD(Iliad->VRAM)" :
-                                                                     "WRITE_FD(VRAM->Iliad)")
+                   << (w.ioctl_cmd == MRVL_CXL_DMA_READ_COMMAND_FD ? "READ_FD(ODM->VRAM)" :
+                                                                     "WRITE_FD(VRAM->ODM)")
                    << " fd=" << fd << " iova=0x" << std::hex << iova << " size=" << std::dec
                    << chunk << " qid=" << w.qid;
 
@@ -879,8 +879,8 @@ nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
             io_uring_sqe_set_data64(sqe, 1);
 
             NIXL_DEBUG << "ODM uring_cmd "
-                       << (uring_op == ODM_URING_CMD_READ_FD ? "READ_FD(Iliad->VRAM)" :
-                                                               "WRITE_FD(VRAM->Iliad)")
+                       << (uring_op == ODM_URING_CMD_READ_FD ? "READ_FD(ODM->VRAM)" :
+                                                               "WRITE_FD(VRAM->ODM)")
                        << " fd=" << fd << " iova=0x" << std::hex << iova << " size=" << std::dec
                        << chunk << " qid=" << qid_start_ << ".." << qid_end_;
 

@@ -22,8 +22,8 @@ namespace {
 
 /*
  * Read device memory into a host buffer via MRVL_CXL_DMA_READ_COMMAND. This is
- * the ODM equivalent of POSIX/GDS consistency checking, which uses pread()
- * on the storage fd after a WRITE transfer.
+ * Host-side readback of ODM device memory after a WRITE transfer for
+ * nixlbench consistency verification.
  */
 bool
 odmHostReadDevice(const xferBenchIOV &iov, void **addr_out, bool *allocated_out) {

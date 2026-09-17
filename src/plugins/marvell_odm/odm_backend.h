@@ -52,7 +52,7 @@
  * @brief Memory types supported by the ODM backend.
  *
  * VRAM_SEG <-> ODM_MEM_SEG: ODM DMA controller via dma-buf for both directions
- * (Iliad DRAM <-> GPU VRAM). VRAM is exported with cuMemGetHandleForAddressRange;
+ * (ODM device memory <-> GPU VRAM). VRAM is exported with cuMemGetHandleForAddressRange;
  * CUDA is required only for VRAM dma-buf export.
  */
 inline nixl_mem_list_t
@@ -93,7 +93,7 @@ public:
 /** One ODM/dma-buf transfer segment. */
 struct OdmSegment {
     uint64_t gpu_va; /* GPU VRAM virtual address to export as dma-buf */
-    uint64_t dma_dev_addr; /* Iliad/Structera device-local IOVA */
+    uint64_t dma_dev_addr; /* ODM device-local IOVA */
     uint64_t len;
 };
 

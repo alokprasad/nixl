@@ -1,6 +1,6 @@
 # MARVELL_ODM NIXL Plugin
 
-Marvell ODM moves data between GPU VRAM and Iliad/Structera device memory using
+Marvell ODM moves data between GPU VRAM and Marvell ODM device memory using
 the ODM DMA controller with GPU VRAM exported as a dma-buf (`VRAM_SEG <->
 ODM_MEM_SEG`).
 
