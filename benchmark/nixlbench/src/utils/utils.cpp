@@ -273,8 +273,8 @@ NB_ARG_INT32(device_channel_num,
              "0 means one channel per execution group. "
              "Only used when --use_device_api is enabled.");
 
-/* ODM device base address is allocated via GET_IOVA on /dev/odm0 (see
- * nixl_worker.cpp), overridable via the ODM_ADDR env var. */
+/* ODM device IOVA is auto-allocated by the MARVELL_ODM plugin on registerMem
+ * when remote DRAM_SEG is registered with addr=0. */
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -983,7 +983,7 @@ xferBenchConfig::printConfig() {
                         azure_blob_connection_string);
         }
         if (backend == XFERBENCH_BACKEND_MARVELL_ODM) {
-            printOption("ODM base addr", "auto (GET_IOVA) / $ODM_ADDR");
+            printOption("ODM device IOVA", "auto (plugin GET_IOVA on addr=0)");
             printOption("ODM io_uring (--odm_use_io_uring=[0,1])",
                         std::to_string(odm_use_io_uring));
             printOption("ODM queue start (--odm_qid_start=N)", std::to_string(odm_qid_start));
@@ -1280,7 +1280,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
             len = iov.len;
 
             if (odm_ctx.fetchWriteBuffer(iov, &addr, &is_allocated)) {
-                // ODM WRITE consistency buffer prepared via host READ ioctl.
+                // ODM WRITE consistency buffer prepared via NIXL READ.
             } else if ((xferBenchConfig::isStorageBackend() &&
                         xferBenchConfig::backend != XFERBENCH_BACKEND_MARVELL_ODM) ||
                        xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO) {

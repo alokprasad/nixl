@@ -18,29 +18,98 @@
 
 #include "worker/nixl/nixl_worker_odm.h"
 
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-
-#include <cerrno>
-#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <strings.h>
 
-#include "odm_ioctl.h"
-#include "utils/utils.h"
-
 namespace {
 
+xferBenchOdm::State *g_consistency_state = nullptr;
+
+static constexpr int kStagingDevId = 0;
+static constexpr size_t kSeedChunk = 0x400000ULL;
+
+void
+addXferDesc(nixl_xfer_dlist_t &dlist, uint64_t addr, size_t len, int dev_id) {
+    nixlBasicDesc desc;
+    desc.addr = addr;
+    desc.len = len;
+    desc.devId = dev_id;
+    dlist.addDesc(desc);
+}
+
 bool
-odmIoctlSizeOk(size_t size) {
-    if (size > UINT32_MAX) {
-        std::cerr << "ODM: size " << size << " exceeds 32-bit ioctl field limit" << std::endl;
+runSyncXfer(nixlAgent *agent,
+            nixlBackendH *backend,
+            const std::string &target,
+            nixl_xfer_op_t op,
+            uint64_t local_addr,
+            size_t len,
+            int local_dev_id,
+            const xferBenchIOV &remote_iov) {
+    nixl_xfer_dlist_t local_desc(DRAM_SEG);
+    nixl_xfer_dlist_t remote_desc(DRAM_SEG);
+    addXferDesc(local_desc, local_addr, len, local_dev_id);
+    addXferDesc(remote_desc, remote_iov.addr, remote_iov.len, remote_iov.devId);
+
+    nixl_opt_args_t params;
+    params.backends.push_back(backend);
+
+    nixlXferReqH *req = nullptr;
+    nixl_status_t rc = agent->createXferReq(op, local_desc, remote_desc, target, req, &params);
+    if (rc != NIXL_SUCCESS) {
+        std::cerr << "ODM: createXferReq failed: " << nixlEnumStrings::statusStr(rc) << std::endl;
+        return false;
+    }
+
+    rc = agent->postXferReq(req);
+    if (rc != NIXL_SUCCESS && rc != NIXL_IN_PROG) {
+        std::cerr << "ODM: postXferReq failed: " << nixlEnumStrings::statusStr(rc) << std::endl;
+        agent->releaseXferReq(req);
+        return false;
+    }
+
+    while (true) {
+        rc = agent->getXferStatus(req);
+        if (rc == NIXL_IN_PROG) {
+            continue;
+        }
+        break;
+    }
+
+    agent->releaseXferReq(req);
+    if (rc != NIXL_SUCCESS) {
+        std::cerr << "ODM: transfer failed: " << nixlEnumStrings::statusStr(rc) << std::endl;
         return false;
     }
     return true;
+}
+
+bool
+registerStaging(void *host, size_t len, nixlAgent *agent, nixlBackendH *backend) {
+    std::vector<xferBenchIOV> staging_iov = {
+        {reinterpret_cast<uint64_t>(host), len, kStagingDevId}};
+    nixl_reg_dlist_t reg = iovListToNixlRegDlist(staging_iov, DRAM_SEG);
+    nixl_opt_args_t opt_args;
+    opt_args.backends.push_back(backend);
+    const nixl_status_t rc = agent->registerMem(reg, &opt_args);
+    if (rc != NIXL_SUCCESS) {
+        std::cerr << "ODM: staging registerMem failed: " << nixlEnumStrings::statusStr(rc)
+                  << std::endl;
+        return false;
+    }
+    return true;
+}
+
+void
+deregisterStaging(void *host, size_t len, nixlAgent *agent, nixlBackendH *backend) {
+    std::vector<xferBenchIOV> staging_iov = {
+        {reinterpret_cast<uint64_t>(host), len, kStagingDevId}};
+    nixl_reg_dlist_t reg = iovListToNixlRegDlist(staging_iov, DRAM_SEG);
+    nixl_opt_args_t opt_args;
+    opt_args.backends.push_back(backend);
+    agent->deregisterMem(reg, &opt_args);
 }
 
 } // namespace
@@ -70,139 +139,128 @@ configureBackend(const std::vector<std::string> &devices,
     if (use_io_uring) {
         backend_params["odm_use_io_uring"] = "1";
     }
-    state.explicit_base_addr_ = explicitBaseAddrFromEnv();
     std::cout << "MARVELL_ODM backend: dma_device=" << odm_device
               << " qid=" << xferBenchConfig::odm_qid_start
               << " qid_range=" << xferBenchConfig::odm_qid_start << ".."
               << xferBenchConfig::odm_qid_end << " threads=" << xferBenchConfig::num_threads
               << " io_uring=" << (use_io_uring ? "on" : "off")
               << " engine=ODM/dma-buf (both directions)"
-              << " device_iova=" << (state.explicit_base_addr_ != 0 ? "ODM_ADDR override" :
-                                                                    "auto (plugin GET_IOVA)")
+              << " device_iova=auto (plugin GET_IOVA)"
               << std::endl;
 }
 
-uint64_t
-explicitBaseAddrFromEnv() {
-    if (const char *e = getenv("ODM_ADDR")) {
-        const uint64_t v = strtoull(e, nullptr, 0);
-        if (v != 0) {
-            std::cout << "ODM: using explicit base 0x" << std::hex << v << std::dec
-                      << " (ODM_ADDR env)" << std::endl;
-            return v;
-        }
-    }
-    return 0;
+void
+State::bindNixl(nixlAgent *agent, nixlBackendH *backend, const std::string &target) {
+    agent_ = agent;
+    backend_ = backend;
+    target_ = target;
 }
 
 void
-State::resolveDeviceIovas(nixlAgent &agent,
-                          nixlBackendH *backend,
-                          std::vector<xferBenchIOV> &iovs) {
-    if (iovs.empty() || backend == nullptr) {
-        return;
-    }
-    nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iovs, DRAM_SEG);
-    nixl_opt_args_t opt_args;
-    opt_args.backends.push_back(backend);
-    std::vector<nixl_query_resp_t> resp;
-    const nixl_status_t rc = agent.queryMem(desc_list, resp, &opt_args);
-    if (rc != NIXL_SUCCESS) {
-        std::cerr << "ODM: queryMem failed after registerMem" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-    if (resp.size() != iovs.size()) {
-        std::cerr << "ODM: queryMem returned unexpected response count" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-    for (size_t i = 0; i < iovs.size(); ++i) {
-        if (iovs[i].addr != 0) {
-            continue;
-        }
-        if (!resp[i].has_value() || resp[i]->count("device_iova") == 0) {
-            std::cerr << "ODM: missing device IOVA for auto-allocated registration" << std::endl;
-            exit(EXIT_FAILURE);
-        }
-        const uint64_t device_iova = std::stoull((*resp[i])["device_iova"], nullptr, 0);
-        iovs[i].handle = static_cast<unsigned long long>(device_iova);
-    }
+setConsistencyState(State *state) {
+    g_consistency_state = state;
 }
 
-void
-State::seedViaHostWrite(uint64_t device_iova, size_t size, uint8_t pattern) {
-    if (size == 0 || device_iova == 0) {
-        return;
+bool
+fetchWriteBufferForConsistency(const xferBenchIOV &iov, void **addr_out, bool *allocated_out) {
+    if (!g_consistency_state) {
+        return false;
     }
-    const std::string &dev = device_path_.empty() ? xferBenchConfig::odm_device_path : device_path_;
-    static constexpr size_t kSeedChunk = 0x400000ULL; /* 4 MiB, matches ODM ioctl u32 limit */
+    return g_consistency_state->fetchWriteBuffer(iov, addr_out, allocated_out);
+}
 
-    int fd = open(dev.c_str(), O_RDWR);
-    if (fd < 0) {
-        std::cerr << "ODM: host seed: open(" << dev << ") failed: " << strerror(errno) << std::endl;
-        return;
+bool
+State::fetchWriteBuffer(const xferBenchIOV &iov, void **addr_out, bool *allocated_out) {
+    *addr_out = nullptr;
+    *allocated_out = false;
+
+    if (agent_ == nullptr || backend_ == nullptr || target_.empty()) {
+        std::cerr << "ODM: consistency: NIXL context not bound" << std::endl;
+        return false;
     }
 
-    size_t offset = 0;
-    while (offset < size) {
-        const size_t chunk = std::min(size - offset, kSeedChunk);
-        if (!odmIoctlSizeOk(chunk)) {
-            close(fd);
-            return;
-        }
-        void *host = nullptr;
-        if (posix_memalign(&host, xferBenchConfig::page_size, chunk) != 0) {
-            std::cerr << "ODM: host seed: allocation failed for chunk " << chunk << std::endl;
-            close(fd);
-            return;
-        }
-        memset(host, pattern, chunk);
+    void *host = nullptr;
+    if (posix_memalign(&host, xferBenchConfig::page_size, iov.len) != 0) {
+        std::cerr << "ODM: consistency: host buffer alloc failed" << std::endl;
+        return false;
+    }
 
-        struct mrvl_dma_xfer_commands cmd{};
-        cmd.host_va_addr = reinterpret_cast<uint64_t>(host);
-        cmd.target_iova_addr = device_iova + offset;
-        cmd.tranfer_size = static_cast<uint32_t>(chunk);
-        cmd.tranfer_type = ODM_XTYPE_INBOUND;
-        cmd.qid = 0;
-        if (ioctl(fd, MRVL_CXL_DMA_WRITE_COMMAND, &cmd) < 0) {
-            std::cerr << "ODM: host seed: WRITE ioctl at IOVA 0x" << std::hex
-                      << (device_iova + offset) << std::dec << " failed: " << strerror(errno)
-                      << std::endl;
-            free(host);
-            close(fd);
-            return;
-        }
+    if (!registerStaging(host, iov.len, agent_, backend_)) {
         free(host);
-        offset += chunk;
+        return false;
     }
-    close(fd);
+
+    const bool ok =
+        runSyncXfer(agent_, backend_, target_, NIXL_READ, reinterpret_cast<uint64_t>(host),
+                    iov.len, kStagingDevId, iov);
+    deregisterStaging(host, iov.len, agent_, backend_);
+
+    if (!ok) {
+        std::cerr << "ODM: consistency: NIXL READ from device offset 0x" << std::hex << iov.addr
+                  << std::dec << " failed" << std::endl;
+        free(host);
+        return false;
+    }
+
+    *addr_out = host;
+    *allocated_out = true;
+    return true;
 }
 
 void
 State::seedRegisteredBuffers(const std::vector<NixlMemRegion> &remote_regs,
                              size_t total_size,
                              uint8_t pattern) {
+    if (agent_ == nullptr || backend_ == nullptr || target_.empty()) {
+        std::cerr << "ODM: seed: NIXL context not bound" << std::endl;
+        return;
+    }
+
     size_t seeded = 0;
     for (const auto &reg : remote_regs) {
         for (const auto &iov : reg.iovs()) {
-            if (seeded >= total_size) {
-                return;
+            size_t offset = 0;
+            while (offset < iov.len && seeded < total_size) {
+                const size_t chunk = std::min({kSeedChunk, iov.len - offset, total_size - seeded});
+                void *host = nullptr;
+                if (posix_memalign(&host, xferBenchConfig::page_size, chunk) != 0) {
+                    std::cerr << "ODM: seed: host buffer alloc failed" << std::endl;
+                    return;
+                }
+                memset(host, pattern, chunk);
+
+                if (!registerStaging(host, chunk, agent_, backend_)) {
+                    free(host);
+                    return;
+                }
+
+                const xferBenchIOV remote_chunk(iov.addr + offset, chunk, iov.devId);
+                const bool ok = runSyncXfer(agent_, backend_, target_, NIXL_WRITE,
+                                            reinterpret_cast<uint64_t>(host), chunk, kStagingDevId,
+                                            remote_chunk);
+                deregisterStaging(host, chunk, agent_, backend_);
+                free(host);
+
+                if (!ok) {
+                    std::cerr << "ODM: seed: NIXL WRITE to device offset 0x" << std::hex
+                              << (iov.addr + offset) << std::dec << " failed" << std::endl;
+                    return;
+                }
+
+                offset += chunk;
+                seeded += chunk;
             }
-            const size_t chunk = std::min(iov.len, total_size - seeded);
-            const uint64_t device_iova = iov.handle ? iov.handle : iov.addr;
-            seedViaHostWrite(device_iova, chunk, pattern);
-            seeded += chunk;
+            if (seeded >= total_size) {
+                break;
+            }
         }
     }
     std::cout << "ODM: seeded " << seeded << " bytes with 0x" << std::hex
-              << static_cast<unsigned>(pattern) << std::dec << " (host WRITE)" << std::endl;
+              << static_cast<unsigned>(pattern) << std::dec << " (NIXL WRITE)" << std::endl;
 }
 
 void
 State::seedDramForRead(const std::vector<NixlMemRegion> &remote_regs, size_t total_size) {
-    /*
-     * Same pattern as POSIX/GDS: pre-fill the remote storage with the expected
-     * byte (0xaa) before a READ benchmark via host WRITE ioctl.
-     */
     seedRegisteredBuffers(remote_regs, total_size, XFERBENCH_TARGET_BUFFER_ELEMENT);
 }
 

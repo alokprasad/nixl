@@ -368,9 +368,19 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 
     CHECK_NIXL_ERROR(agent->createBackend(backend_name, backend_params, backend_engine),
                      "createBackend failed!");
+
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
+        const std::string target = xferBenchConfig::isStorageBackend() ? "initiator" : name;
+        odm_.bindNixl(agent, backend_engine, target);
+        xferBenchOdm::setConsistencyState(&odm_);
+    }
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MARVELL_ODM)) {
+        xferBenchOdm::setConsistencyState(nullptr);
+    }
+
     remote_regs_.clear();
     remote_fds.clear();
     local_regs_.clear();
@@ -1110,20 +1120,13 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
         const std::string &odm_dev =
             odm_.device_path_.empty() ? xferBenchConfig::odm_device_path : odm_.device_path_;
         xferBenchConfig::odm_device_path = odm_dev;
-        const uint64_t odm_base = odm_.explicit_base_addr_;
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
-                const uint64_t dev_addr =
-                    odm_base != 0 ?
-                    (odm_base + static_cast<uint64_t>(list_idx * num_devices + i) * buffer_size) :
-                    0;
-                iov_list.emplace_back(dev_addr, buffer_size, 0);
+                iov_list.emplace_back(0, buffer_size, static_cast<int>(i));
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, DRAM_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem ODM failed");
-            odm_.resolveDeviceIovas(*agent, backend_engine, iov_list);
-            // Device IOVA is not heap-allocated; do not free on teardown.
             remote_regs_.emplace_back(
                 *agent, backend_engine, DRAM_SEG, std::move(iov_list), false);
         }

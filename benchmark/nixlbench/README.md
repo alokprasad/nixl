@@ -869,7 +869,6 @@ single-instance runs.
 ```bash
 export LD_LIBRARY_PATH=.../build/src/core:.../build/src/plugins/marvell_odm
 export NIXL_PLUGIN_DIR=.../build/src/plugins/marvell_odm
-export ODM_ADDR=0x800000000   # when GET_IOVA is unavailable
 # insmod mrvl_cxl_pcie.ko odm_use_io_uring=1   # kernel module io_uring path
 
 # Basic WRITE benchmark (io_uring + queues 0..15, 8 threads)

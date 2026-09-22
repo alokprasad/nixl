@@ -80,7 +80,7 @@ struct mrvl_dma_xfer_commands {
 
 struct mrvl_dma_iova_commands {
     uint64_t target_iova_addr;
-    uint32_t target_iova_size;
+    uint64_t target_iova_size;
 };
 
 #define MRVL_CXL_DMA_READ_COMMAND _IOWR(ODM_IOCTL_MAGIC, 3, struct mrvl_dma_xfer_commands)

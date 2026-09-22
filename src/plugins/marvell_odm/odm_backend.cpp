@@ -79,8 +79,8 @@ memTypeLabel(nixl_mem_t mem) {
 
 } // namespace
 
-/* 64KB-aligned, < UINT32_MAX: the FD ioctl carries a u32 transfer size and the
- * GPU dma-buf export wants 64KB-aligned ranges. */
+/* 64KB-aligned, fits dma-buf FD ioctl u32 transfer size field. The GPU dma-buf
+ * export wants 64KB-aligned ranges. IOVA allocation itself is now u64. */
 static constexpr uint64_t ODM_MAX_FD_CHUNK = 0xFFFF0000ULL;
 
 // ---------------------------------------------------------------------------
@@ -331,14 +331,8 @@ nixlOdmEngine::registerMem(const nixlBlobDesc &mem,
 
     if (nixl_mem == DRAM_SEG) {
         if (mem.addr == 0) {
-            if (mem.len > UINT32_MAX) {
-                NIXL_ERROR << "ODM: DRAM_SEG auto IOVA size " << mem.len
-                           << " exceeds GET_IOVA 32-bit limit";
-                delete md;
-                return NIXL_ERR_INVALID_PARAM;
-            }
             struct mrvl_dma_iova_commands cmd{};
-            cmd.target_iova_size = static_cast<uint32_t>(mem.len);
+            cmd.target_iova_size = mem.len;
             if (ioctl(dma_fd_, MRVL_CXL_GET_IOVA_COMMAND, &cmd) < 0) {
                 NIXL_ERROR << "ODM: GET_IOVA failed: " << strerror(errno);
                 delete md;
@@ -413,7 +407,7 @@ nixlOdmEngine::deregisterMem(nixlBackendMD *meta) {
     if (md->type == DRAM_SEG && md->iova_allocated) {
         struct mrvl_dma_iova_commands cmd{};
         cmd.target_iova_addr = md->dma_addr;
-        cmd.target_iova_size = static_cast<uint32_t>(md->size);
+        cmd.target_iova_size = md->size;
         if (ioctl(dma_fd_, MRVL_CXL_FREE_IOVA_COMMAND, &cmd) < 0) {
             NIXL_WARN << "ODM: FREE_IOVA failed: " << strerror(errno);
         }

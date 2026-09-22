@@ -61,7 +61,6 @@ export NIXL_PLUGIN_DIR=build/src/plugins/marvell_odm
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `ODM_ADDR` | Optional fixed device IOVA base (advanced override; default is plugin auto IOVA) | `0x800000000` |
 | `ODM_USE_IO_URING` | Enable io_uring submit path (fallback if `--odm_use_io_uring` unset) | `1` |
 | `NIXL_PLUGIN_DIR` | Directory containing `libplugin_MARVELL_ODM.so` | `build/src/plugins/marvell_odm` |
 
@@ -92,7 +91,7 @@ export NIXL_PLUGIN_DIR=build/src/plugins/marvell_odm
 ## Consistency Checking
 
 When `--check_consistency=1` is set on a WRITE benchmark, nixlbench reads device
-memory back through the ODM host READ ioctl and compares against the initiator
+memory back through a NIXL READ transfer and compares against the initiator
 buffer. No ETCD is required for single-instance runs.
 
 ```bash
@@ -114,9 +113,9 @@ buffer. No ETCD is required for single-instance runs.
 ## How It Works
 
 1. **nixlbench** selects backend `MARVELL_ODM` and passes device/queue params.
-2. **Plugin** allocates device IOVA via `GET_IOVA` when remote `DRAM_SEG` is registered with `addr=0` (or uses `ODM_ADDR` override).
+2. **Plugin** allocates device IOVA via `GET_IOVA` when remote `DRAM_SEG` is registered with `addr=0`.
 3. **Plugin** exports GPU VRAM as dma-buf and submits ODM DMA via ioctl or io_uring.
-4. **Consistency** (optional) pulls device data via host READ ioctl for verification.
+4. **Consistency** (optional) pulls device data via NIXL READ for verification.
 
 ## See Also
 

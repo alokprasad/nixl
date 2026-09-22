@@ -40,8 +40,8 @@ Disable with `-Ddisable_odm_backend=true`.
 
 Device DRAM registrations use mailbox-allocated IOVA from `GET_IOVA` on
 `/dev/odm0` when registered with `addr=0`. The plugin frees IOVA on
-`deregisterMem`. For debugging or fixed layouts, register with an explicit IOVA
-or set `ODM_ADDR` in nixlbench (advanced override).
+`deregisterMem`. Register with a non-zero address only when supplying a
+caller-owned host VA or pre-allocated device IOVA.
 
 ## io_uring / SQE128
 

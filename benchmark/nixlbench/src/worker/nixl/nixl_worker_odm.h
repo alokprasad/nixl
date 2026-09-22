@@ -25,24 +25,27 @@
 
 #include <nixl.h>
 
+#include "utils/utils.h"
 #include "worker/nixl/nixl_mem_region.h"
 
 namespace xferBenchOdm {
 
 struct State {
     std::string device_path_;
-    uint64_t explicit_base_addr_ = 0; /* non-zero when ODM_ADDR override is set */
+    nixlAgent *agent_ = nullptr;
+    nixlBackendH *backend_ = nullptr;
+    std::string target_;
 
     void
-    seedViaHostWrite(uint64_t device_iova, size_t size, uint8_t pattern);
+    bindNixl(nixlAgent *agent, nixlBackendH *backend, const std::string &target);
+    bool
+    fetchWriteBuffer(const xferBenchIOV &iov, void **addr_out, bool *allocated_out);
     void
     seedRegisteredBuffers(const std::vector<NixlMemRegion> &remote_regs,
                           size_t total_size,
                           uint8_t pattern);
     void
     seedDramForRead(const std::vector<NixlMemRegion> &remote_regs, size_t total_size);
-    void
-    resolveDeviceIovas(nixlAgent &agent, nixlBackendH *backend, std::vector<xferBenchIOV> &iovs);
 };
 
 void
@@ -50,8 +53,11 @@ configureBackend(const std::vector<std::string> &devices,
                  State &state,
                  nixl_b_params_t &backend_params);
 
-uint64_t
-explicitBaseAddrFromEnv();
+void
+setConsistencyState(State *state);
+
+bool
+fetchWriteBufferForConsistency(const xferBenchIOV &iov, void **addr_out, bool *allocated_out);
 
 } // namespace xferBenchOdm
 

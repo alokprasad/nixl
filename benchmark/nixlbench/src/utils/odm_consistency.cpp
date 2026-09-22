@@ -6,77 +6,7 @@
 
 #include "utils/odm_consistency.h"
 
-#include <climits>
-#include <cerrno>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-
-#include "odm_ioctl.h"
-
-namespace {
-
-/*
- * Read device memory into a host buffer via MRVL_CXL_DMA_READ_COMMAND. This is
- * Host-side readback of ODM device memory after a WRITE transfer for
- * nixlbench consistency verification.
- */
-bool
-odmHostReadDevice(const xferBenchIOV &iov, void **addr_out, bool *allocated_out) {
-    *addr_out = nullptr;
-    *allocated_out = false;
-
-    if (iov.len > UINT32_MAX) {
-        std::cerr << "ODM: consistency: iov length " << iov.len
-                  << " exceeds 32-bit ioctl field limit" << std::endl;
-        return false;
-    }
-
-    void *host = nullptr;
-    if (posix_memalign(&host, xferBenchConfig::page_size, iov.len) != 0) {
-        std::cerr << "ODM: consistency: host buffer alloc failed" << std::endl;
-        return false;
-    }
-    *allocated_out = true;
-
-    const uint64_t device_iova =
-        iov.handle ? (static_cast<uint64_t>(iov.handle) + iov.addr) : iov.addr;
-
-    struct mrvl_dma_xfer_commands cmd{};
-    cmd.host_va_addr = reinterpret_cast<uint64_t>(host);
-    cmd.target_iova_addr = device_iova;
-    cmd.tranfer_size = static_cast<uint32_t>(iov.len);
-    cmd.tranfer_type = ODM_XTYPE_OUTBOUND;
-    cmd.qid = 0;
-
-    int odm_fd = open(xferBenchConfig::odm_device_path.c_str(), O_RDWR);
-    if (odm_fd < 0) {
-        std::cerr << "ODM: consistency: open(" << xferBenchConfig::odm_device_path
-                  << ") failed: " << strerror(errno) << std::endl;
-        free(host);
-        *allocated_out = false;
-        return false;
-    }
-
-    const bool ok = ioctl(odm_fd, MRVL_CXL_DMA_READ_COMMAND, &cmd) == 0;
-    close(odm_fd);
-    if (!ok) {
-        std::cerr << "ODM: consistency: host READ ioctl from IOVA 0x" << std::hex << device_iova
-                  << std::dec << " failed: " << strerror(errno) << std::endl;
-        free(host);
-        *allocated_out = false;
-        return false;
-    }
-
-    *addr_out = host;
-    return true;
-}
-
-} // namespace
+#include "worker/nixl/nixl_worker_odm.h"
 
 OdmConsistencyContext::OdmConsistencyContext(
     const std::vector<std::vector<xferBenchIOV>> &iov_lists) {
@@ -97,5 +27,5 @@ OdmConsistencyContext::fetchWriteBuffer(const xferBenchIOV &iov,
     if (!active) {
         return false;
     }
-    return odmHostReadDevice(iov, addr_out, allocated_out);
+    return xferBenchOdm::fetchWriteBufferForConsistency(iov, addr_out, allocated_out);
 }
