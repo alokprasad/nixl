@@ -20,10 +20,7 @@
 
 #include <fcntl.h>
 #include <sys/ioctl.h>
-#include <sys/mman.h>
 #include <unistd.h>
-
-#include <linux/cxl_mem.h>
 
 #include <cerrno>
 #include <climits>
@@ -37,41 +34,6 @@
 
 namespace {
 
-constexpr uint64_t kCxlCapUnitBytes = 256ULL * 1024 * 1024;
-constexpr size_t kCxlIdentifyPayloadSize = 0x43;
-constexpr size_t kCxlIdentifyTotalCapOffset = 0x10;
-constexpr size_t kCxlIdentifyPersistentCapOffset = 0x20;
-
-void
-logOdmDeviceOpenError(const std::string &device_path, const char *operation) {
-    const int err = errno;
-    switch (err) {
-    case ENOENT:
-        std::cerr << "ODM: " << operation << "(" << device_path
-                  << ") failed: device node not present (is the mrvl_cxl_pcie "
-                     "kernel module loaded?)"
-                  << std::endl;
-        break;
-    case EACCES:
-        std::cerr << "ODM: " << operation << "(" << device_path
-                  << ") failed: permission denied (check ODM char-device "
-                     "permissions)"
-                  << std::endl;
-        break;
-    case ENODEV:
-    case ENXIO:
-        std::cerr << "ODM: " << operation << "(" << device_path
-                  << ") failed: device present but not ready (driver loaded, "
-                     "hardware may be unavailable)"
-                  << std::endl;
-        break;
-    default:
-        std::cerr << "ODM: " << operation << "(" << device_path << ") failed: " << strerror(err)
-                  << std::endl;
-        break;
-    }
-}
-
 bool
 odmIoctlSizeOk(size_t size) {
     if (size > UINT32_MAX) {
@@ -79,54 +41,6 @@ odmIoctlSizeOk(size_t size) {
         return false;
     }
     return true;
-}
-
-uint64_t
-readCxlCapacityFieldBytes(const unsigned char *id, size_t offset) {
-    uint64_t units = 0;
-
-    for (int i = 7; i >= 0; i--) {
-        units = (units << 8) | id[offset + i];
-    }
-    return units * kCxlCapUnitBytes;
-}
-
-uint64_t
-readCxlOdmCapacityBytes(const std::string &dev_path, uint64_t *total_bytes_out) {
-    int fd = open(dev_path.c_str(), O_RDWR);
-    if (fd < 0) {
-        return 0;
-    }
-
-    unsigned char id[kCxlIdentifyPayloadSize];
-    memset(id, 0, sizeof(id));
-    struct cxl_send_command sc;
-    memset(&sc, 0, sizeof(sc));
-    sc.id = CXL_MEM_COMMAND_ID_IDENTIFY;
-    sc.out.size = sizeof(id);
-    sc.out.payload = reinterpret_cast<uint64_t>(id);
-
-    int rc = ioctl(fd, CXL_MEM_SEND_COMMAND, &sc);
-    close(fd);
-    if (rc < 0 || sc.retval != 0) {
-        return 0;
-    }
-
-    const uint64_t total_bytes = readCxlCapacityFieldBytes(id, kCxlIdentifyTotalCapOffset);
-    const uint64_t persistent_bytes =
-        readCxlCapacityFieldBytes(id, kCxlIdentifyPersistentCapOffset);
-
-    if (total_bytes_out) {
-        *total_bytes_out = total_bytes;
-    }
-
-    if (persistent_bytes > 0) {
-        return persistent_bytes;
-    }
-    if (total_bytes > 0) {
-        return total_bytes;
-    }
-    return 0;
 }
 
 } // namespace
@@ -156,33 +70,67 @@ configureBackend(const std::vector<std::string> &devices,
     if (use_io_uring) {
         backend_params["odm_use_io_uring"] = "1";
     }
+    state.explicit_base_addr_ = explicitBaseAddrFromEnv();
     std::cout << "MARVELL_ODM backend: dma_device=" << odm_device
               << " qid=" << xferBenchConfig::odm_qid_start
               << " qid_range=" << xferBenchConfig::odm_qid_start << ".."
               << xferBenchConfig::odm_qid_end << " threads=" << xferBenchConfig::num_threads
               << " io_uring=" << (use_io_uring ? "on" : "off")
               << " engine=ODM/dma-buf (both directions)"
-              << " addr=auto(GET_IOVA/$ODM_ADDR)" << std::endl;
+              << " device_iova=" << (state.explicit_base_addr_ != 0 ? "ODM_ADDR override" :
+                                                                    "auto (plugin GET_IOVA)")
+              << std::endl;
+}
+
+uint64_t
+explicitBaseAddrFromEnv() {
+    if (const char *e = getenv("ODM_ADDR")) {
+        const uint64_t v = strtoull(e, nullptr, 0);
+        if (v != 0) {
+            std::cout << "ODM: using explicit base 0x" << std::hex << v << std::dec
+                      << " (ODM_ADDR env)" << std::endl;
+            return v;
+        }
+    }
+    return 0;
 }
 
 void
-State::freeIova() {
-    if (iova_fd_ < 0 || base_addr_ == 0 || !use_get_iova_) {
+State::resolveDeviceIovas(nixlAgent &agent,
+                          nixlBackendH *backend,
+                          std::vector<xferBenchIOV> &iovs) {
+    if (iovs.empty() || backend == nullptr) {
         return;
     }
-    struct mrvl_dma_iova_commands cmd{};
-    cmd.target_iova_addr = base_addr_;
-    cmd.target_iova_size = iova_size_;
-    ioctl(iova_fd_, MRVL_CXL_FREE_IOVA_COMMAND, &cmd);
-    close(iova_fd_);
-    iova_fd_ = -1;
-    iova_size_ = 0;
-    use_get_iova_ = false;
+    nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iovs, DRAM_SEG);
+    nixl_opt_args_t opt_args;
+    opt_args.backends.push_back(backend);
+    std::vector<nixl_query_resp_t> resp;
+    const nixl_status_t rc = agent.queryMem(desc_list, resp, &opt_args);
+    if (rc != NIXL_SUCCESS) {
+        std::cerr << "ODM: queryMem failed after registerMem" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    if (resp.size() != iovs.size()) {
+        std::cerr << "ODM: queryMem returned unexpected response count" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    for (size_t i = 0; i < iovs.size(); ++i) {
+        if (iovs[i].addr != 0) {
+            continue;
+        }
+        if (!resp[i].has_value() || resp[i]->count("device_iova") == 0) {
+            std::cerr << "ODM: missing device IOVA for auto-allocated registration" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        const uint64_t device_iova = std::stoull((*resp[i])["device_iova"], nullptr, 0);
+        iovs[i].handle = static_cast<unsigned long long>(device_iova);
+    }
 }
 
 void
-State::seedViaHostWrite(size_t total_size, uint8_t pattern) {
-    if (total_size == 0) {
+State::seedViaHostWrite(uint64_t device_iova, size_t size, uint8_t pattern) {
+    if (size == 0 || device_iova == 0) {
         return;
     }
     const std::string &dev = device_path_.empty() ? xferBenchConfig::odm_device_path : device_path_;
@@ -195,8 +143,8 @@ State::seedViaHostWrite(size_t total_size, uint8_t pattern) {
     }
 
     size_t offset = 0;
-    while (offset < total_size) {
-        const size_t chunk = std::min(total_size - offset, kSeedChunk);
+    while (offset < size) {
+        const size_t chunk = std::min(size - offset, kSeedChunk);
         if (!odmIoctlSizeOk(chunk)) {
             close(fd);
             return;
@@ -211,13 +159,13 @@ State::seedViaHostWrite(size_t total_size, uint8_t pattern) {
 
         struct mrvl_dma_xfer_commands cmd{};
         cmd.host_va_addr = reinterpret_cast<uint64_t>(host);
-        cmd.target_iova_addr = base_addr_ + offset;
+        cmd.target_iova_addr = device_iova + offset;
         cmd.tranfer_size = static_cast<uint32_t>(chunk);
         cmd.tranfer_type = ODM_XTYPE_INBOUND;
         cmd.qid = 0;
         if (ioctl(fd, MRVL_CXL_DMA_WRITE_COMMAND, &cmd) < 0) {
             std::cerr << "ODM: host seed: WRITE ioctl at IOVA 0x" << std::hex
-                      << (base_addr_ + offset) << std::dec << " failed: " << strerror(errno)
+                      << (device_iova + offset) << std::dec << " failed: " << strerror(errno)
                       << std::endl;
             free(host);
             close(fd);
@@ -227,74 +175,35 @@ State::seedViaHostWrite(size_t total_size, uint8_t pattern) {
         offset += chunk;
     }
     close(fd);
-    std::cout << "ODM: seeded " << total_size << " bytes at IOVA 0x" << std::hex << base_addr_
-              << std::dec << " with 0x" << std::hex << static_cast<unsigned>(pattern) << std::dec
-              << " (host WRITE)" << std::endl;
-}
-
-uint64_t
-State::discoverBaseAddr() {
-    if (base_addr_ != 0) {
-        return base_addr_;
-    }
-
-    const std::string &odm_dev = device_path_.empty() ? "/dev/odm0" : device_path_;
-    xferBenchConfig::odm_device_path = odm_dev;
-
-    uint64_t total_bytes = 0;
-    const uint64_t identify_capacity = readCxlOdmCapacityBytes(odm_dev, &total_bytes);
-    if (identify_capacity > 0 && xferBenchConfig::total_buffer_size > identify_capacity) {
-        std::cerr << "ODM: buffer size " << xferBenchConfig::total_buffer_size
-                  << " exceeds CXL IDENTIFY capacity " << identify_capacity << std::endl;
-    }
-
-    if (const char *e = getenv("ODM_ADDR")) {
-        const uint64_t v = strtoull(e, nullptr, 0);
-        if (v != 0) {
-            base_addr_ = v;
-            use_get_iova_ = false;
-            std::cout << "ODM: base 0x" << std::hex << base_addr_ << std::dec
-                      << " (from ODM_ADDR env)" << std::endl;
-            return base_addr_;
-        }
-    }
-
-    iova_fd_ = open(odm_dev.c_str(), O_RDWR);
-    if (iova_fd_ < 0) {
-        logOdmDeviceOpenError(odm_dev, "open");
-        exit(EXIT_FAILURE);
-    }
-    if (!odmIoctlSizeOk(xferBenchConfig::total_buffer_size)) {
-        close(iova_fd_);
-        iova_fd_ = -1;
-        std::cerr << "ODM: buffer size " << xferBenchConfig::total_buffer_size
-                  << " exceeds GET_IOVA ioctl limit" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-    struct mrvl_dma_iova_commands iova_cmd{};
-    iova_cmd.target_iova_size = static_cast<uint32_t>(xferBenchConfig::total_buffer_size);
-    if (ioctl(iova_fd_, MRVL_CXL_GET_IOVA_COMMAND, &iova_cmd) < 0) {
-        std::cerr << "ODM: GET_IOVA on " << odm_dev << " failed: " << strerror(errno)
-                  << " (set ODM_ADDR to bypass GET_IOVA)" << std::endl;
-        close(iova_fd_);
-        iova_fd_ = -1;
-        exit(EXIT_FAILURE);
-    }
-    base_addr_ = iova_cmd.target_iova_addr;
-    iova_size_ = iova_cmd.target_iova_size;
-    use_get_iova_ = true;
-    std::cout << "ODM: allocated IOVA 0x" << std::hex << base_addr_ << std::dec << " size "
-              << iova_size_ << " via GET_IOVA on " << odm_dev << std::endl;
-    return base_addr_;
 }
 
 void
-State::seedDramForRead(size_t total_size) {
+State::seedRegisteredBuffers(const std::vector<NixlMemRegion> &remote_regs,
+                             size_t total_size,
+                             uint8_t pattern) {
+    size_t seeded = 0;
+    for (const auto &reg : remote_regs) {
+        for (const auto &iov : reg.iovs()) {
+            if (seeded >= total_size) {
+                return;
+            }
+            const size_t chunk = std::min(iov.len, total_size - seeded);
+            const uint64_t device_iova = iov.handle ? iov.handle : iov.addr;
+            seedViaHostWrite(device_iova, chunk, pattern);
+            seeded += chunk;
+        }
+    }
+    std::cout << "ODM: seeded " << seeded << " bytes with 0x" << std::hex
+              << static_cast<unsigned>(pattern) << std::dec << " (host WRITE)" << std::endl;
+}
+
+void
+State::seedDramForRead(const std::vector<NixlMemRegion> &remote_regs, size_t total_size) {
     /*
      * Same pattern as POSIX/GDS: pre-fill the remote storage with the expected
      * byte (0xaa) before a READ benchmark via host WRITE ioctl.
      */
-    seedViaHostWrite(total_size, XFERBENCH_TARGET_BUFFER_ELEMENT);
+    seedRegisteredBuffers(remote_regs, total_size, XFERBENCH_TARGET_BUFFER_ELEMENT);
 }
 
 } // namespace xferBenchOdm

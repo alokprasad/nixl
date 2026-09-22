@@ -82,6 +82,7 @@ public:
     uint64_t size;
     uint32_t dev_id;
     uint64_t dma_addr; /* ODM device-local base (DRAM_SEG) */
+    bool iova_allocated; /* true when dma_addr came from GET_IOVA (addr==0 at register) */
 #ifdef HAVE_CUDA
     std::vector<std::pair<uint64_t, uint64_t>> vram_preexport_chunks;
 #endif
@@ -92,7 +93,8 @@ public:
           addr(0),
           size(0),
           dev_id(0),
-          dma_addr(0) {}
+          dma_addr(0),
+          iova_allocated(false) {}
 
     ~nixlOdmMetadata() override = default;
 };
@@ -184,6 +186,9 @@ public:
     deregisterMem(nixlBackendMD *meta) override;
 
     nixl_status_t
+    queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
+
+    nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,
@@ -205,8 +210,29 @@ public:
     releaseReqH(nixlBackendReqH *handle) const override;
 
 private:
+    struct OdmRegKey {
+        uint64_t addr;
+        uint64_t len;
+        uint32_t dev_id;
+
+        bool
+        operator==(const OdmRegKey &o) const {
+            return addr == o.addr && len == o.len && dev_id == o.dev_id;
+        }
+    };
+
+    struct OdmRegKeyHash {
+        size_t
+        operator()(const OdmRegKey &k) const {
+            return std::hash<uint64_t>{}(k.addr) ^ (std::hash<uint64_t>{}(k.len) << 1) ^
+                (std::hash<uint32_t>{}(k.dev_id) << 2);
+        }
+    };
+
     int dma_fd_;
     std::string device_path_;
+    mutable std::mutex auto_iova_lock_;
+    std::unordered_map<OdmRegKey, uint64_t, OdmRegKeyHash> auto_iova_map_;
     uint16_t qid_; /* Backward-compat single queue id (odm_qid). */
     uint16_t qid_start_; /* ODM queue range start (inclusive). */
     uint16_t qid_end_; /* ODM queue range end (inclusive). */

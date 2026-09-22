@@ -25,7 +25,6 @@
 #include <cuda_runtime.h>
 #include <fcntl.h>
 #include <getopt.h>
-#include <sys/ioctl.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -38,7 +37,6 @@
 
 #include "nixl.h"
 #include "nixl_descriptors.h"
-#include "odm_ioctl.h"
 #include "test_utils.h"
 
 namespace {
@@ -88,68 +86,21 @@ devicePath(const std::string &dev_name) {
     return (!dev_name.empty() && dev_name[0] == '/') ? dev_name : ("/dev/" + dev_name);
 }
 
-struct OdmIovaAlloc {
-    int device_fd = -1;
-    uint64_t addr = 0;
-    uint32_t size = 0;
-};
-
-bool
-allocOdmIova(const std::string &dev_name, size_t transfer_size, OdmIovaAlloc &out) {
-    out = {};
-    if (transfer_size > UINT32_MAX) {
-        std::cerr << "ODM: transfer size " << transfer_size << " exceeds 32-bit ioctl limit"
-                  << std::endl;
-        return false;
+uint64_t
+resolveOdmAddr(bool odm_addr_set, uint64_t cli_addr) {
+    if (odm_addr_set) {
+        return cli_addr;
     }
     if (const char *env = std::getenv("ODM_ADDR")) {
         const uint64_t v = std::strtoull(env, nullptr, 0);
         if (v != 0) {
-            out.addr = v;
-            out.size = static_cast<uint32_t>(transfer_size);
-            std::cout << "ODM: using IOVA 0x" << std::hex << out.addr << std::dec
-                      << " from ODM_ADDR (no GET_IOVA alloc)" << std::endl;
-            return true;
+            std::cout << "ODM: using IOVA 0x" << std::hex << v << std::dec
+                      << " from ODM_ADDR (explicit override)" << std::endl;
+            return v;
         }
     }
-
-    const std::string path = devicePath(dev_name);
-    out.device_fd = open(path.c_str(), O_RDWR);
-    if (out.device_fd < 0) {
-        logOdmDeviceError(path, "open");
-        return false;
-    }
-
-    struct mrvl_dma_iova_commands cmd{};
-    cmd.target_iova_size = static_cast<uint32_t>(transfer_size);
-    if (ioctl(out.device_fd, MRVL_CXL_GET_IOVA_COMMAND, &cmd) < 0) {
-        std::cerr << "ODM: GET_IOVA on " << path << " failed: " << std::strerror(errno)
-                  << std::endl;
-        close(out.device_fd);
-        out.device_fd = -1;
-        return false;
-    }
-
-    out.addr = cmd.target_iova_addr;
-    out.size = cmd.target_iova_size;
-    std::cout << "ODM: allocated IOVA 0x" << std::hex << out.addr << std::dec << " (size "
-              << out.size << ") via GET_IOVA on " << path << std::endl;
-    return true;
-}
-
-void
-freeOdmIova(OdmIovaAlloc &alloc) {
-    if (alloc.device_fd < 0 || alloc.addr == 0) {
-        return;
-    }
-    struct mrvl_dma_iova_commands cmd{};
-    cmd.target_iova_addr = alloc.addr;
-    cmd.target_iova_size = alloc.size;
-    if (ioctl(alloc.device_fd, MRVL_CXL_FREE_IOVA_COMMAND, &cmd) < 0) {
-        std::cerr << "ODM: FREE_IOVA failed: " << std::strerror(errno) << std::endl;
-    }
-    close(alloc.device_fd);
-    alloc = {};
+    std::cout << "ODM: registering device DRAM with addr=0 (plugin auto IOVA)" << std::endl;
+    return 0;
 }
 
 void
@@ -178,7 +129,7 @@ printUsage(const char *prog) {
               << "  --qid ID                ODM queue id (sets start/end when range unset)\n"
               << "  --odm_qid_start ID      ODM queue range start (default: 0)\n"
               << "  --odm_qid_end ID        ODM queue range end (default: 15)\n"
-              << "  --odm-addr ADDR         ODM target IOVA (default: GET_IOVA / ODM_ADDR)\n"
+              << "  --odm-addr ADDR         ODM target IOVA (default: addr=0 plugin auto IOVA)\n"
               << "  --size BYTES            Transfer size (default: " << kDefaultTransferSize
               << ")\n"
               << "  --pattern BYTE          Fill/verify byte pattern (default: 0x33)\n"
@@ -217,7 +168,6 @@ waitForXfer(nixlAgent &agent, nixlXferReqH *req, bool sync_cuda = true) {
 int
 main(int argc, char **argv) {
     bool odm_addr_set = false;
-    OdmIovaAlloc odm_iova{};
     std::string dev_name = "odm0";
     std::string qid_str;
     std::string qid_start_str = "0";
@@ -343,16 +293,7 @@ main(int argc, char **argv) {
         return odmDeviceFailureExitCode();
     }
 
-    if (!odm_addr_set) {
-        if (!allocOdmIova(dev_name, transfer_size, odm_iova)) {
-            if (errno == ENOENT) {
-                std::cout << "SKIP: ODM device not present at " << path << std::endl;
-                return kMesonSkip;
-            }
-            return 1;
-        }
-        odm_addr = odm_iova.addr;
-    }
+    odm_addr = resolveOdmAddr(odm_addr_set, odm_addr);
 
     if (!host_dram) {
         CUresult cu_res = cuInit(0);
@@ -411,8 +352,12 @@ main(int argc, char **argv) {
         nixl_opt_args_t extra;
         extra.backends.push_back(backend);
 
-        std::cout << "Phase 2: Register host DRAM and device DRAM at 0x" << std::hex << odm_addr
-                  << std::dec << std::endl;
+        if (odm_addr != 0) {
+            std::cout << "Phase 2: Register host DRAM and device DRAM at 0x" << std::hex
+                      << odm_addr << std::dec << std::endl;
+        } else {
+            std::cout << "Phase 2: Register host DRAM and device DRAM (auto IOVA)" << std::endl;
+        }
         nixl_reg_dlist_t host_list(DRAM_SEG);
         nixl_reg_dlist_t dev_list(DRAM_SEG);
         nixlBlobDesc blob_host;
@@ -465,7 +410,6 @@ main(int argc, char **argv) {
 
         agent.deregisterMem(host_list, &extra);
         agent.deregisterMem(dev_list, &extra);
-        freeOdmIova(odm_iova);
         free(host_buf);
         std::cout << (result == 0 ? "ODM test PASSED" : "ODM test FAILED") << std::endl;
         return result;
@@ -496,8 +440,12 @@ main(int argc, char **argv) {
     nixl_opt_args_t extra;
     extra.backends.push_back(backend);
 
-    std::cout << "Phase 2: Register VRAM and ODM memory at 0x" << std::hex << odm_addr << std::dec
-              << std::endl;
+    if (odm_addr != 0) {
+        std::cout << "Phase 2: Register VRAM and ODM memory at 0x" << std::hex << odm_addr
+                  << std::dec << std::endl;
+    } else {
+        std::cout << "Phase 2: Register VRAM and ODM memory (auto IOVA)" << std::endl;
+    }
     nixl_reg_dlist_t vram_list(VRAM_SEG);
     nixl_reg_dlist_t odm_list(DRAM_SEG);
     nixlBlobDesc blob_vram;
@@ -570,7 +518,6 @@ cleanup:
     }
     agent.deregisterMem(vram_list, &extra);
     agent.deregisterMem(odm_list, &extra);
-    freeOdmIova(odm_iova);
     if (gpu_buf != nullptr) {
         cudaFree(gpu_buf);
     }

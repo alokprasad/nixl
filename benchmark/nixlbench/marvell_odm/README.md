@@ -31,7 +31,6 @@ ninja -C build
 ```bash
 export LD_LIBRARY_PATH=build/src/core:build/src/infra:build/src/utils/stream:build/src/plugins/marvell_odm
 export NIXL_PLUGIN_DIR=build/src/plugins/marvell_odm
-export ODM_ADDR=0x800000000   # use when GET_IOVA is unavailable
 ```
 
 ### Step 3: Run nixlbench
@@ -62,7 +61,7 @@ export ODM_ADDR=0x800000000   # use when GET_IOVA is unavailable
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `ODM_ADDR` | Fixed device IOVA when `GET_IOVA` fails or times out | `0x800000000` |
+| `ODM_ADDR` | Optional fixed device IOVA base (advanced override; default is plugin auto IOVA) | `0x800000000` |
 | `ODM_USE_IO_URING` | Enable io_uring submit path (fallback if `--odm_use_io_uring` unset) | `1` |
 | `NIXL_PLUGIN_DIR` | Directory containing `libplugin_MARVELL_ODM.so` | `build/src/plugins/marvell_odm` |
 
@@ -115,7 +114,7 @@ buffer. No ETCD is required for single-instance runs.
 ## How It Works
 
 1. **nixlbench** selects backend `MARVELL_ODM` and passes device/queue params.
-2. **Worker** allocates device IOVA via `GET_IOVA` on `/dev/odm0` or uses `ODM_ADDR`.
+2. **Plugin** allocates device IOVA via `GET_IOVA` when remote `DRAM_SEG` is registered with `addr=0` (or uses `ODM_ADDR` override).
 3. **Plugin** exports GPU VRAM as dma-buf and submits ODM DMA via ioctl or io_uring.
 4. **Consistency** (optional) pulls device data via host READ ioctl for verification.
 

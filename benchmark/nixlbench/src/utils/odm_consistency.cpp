@@ -43,9 +43,12 @@ odmHostReadDevice(const xferBenchIOV &iov, void **addr_out, bool *allocated_out)
     }
     *allocated_out = true;
 
+    const uint64_t device_iova =
+        iov.handle ? (static_cast<uint64_t>(iov.handle) + iov.addr) : iov.addr;
+
     struct mrvl_dma_xfer_commands cmd{};
     cmd.host_va_addr = reinterpret_cast<uint64_t>(host);
-    cmd.target_iova_addr = iov.addr;
+    cmd.target_iova_addr = device_iova;
     cmd.tranfer_size = static_cast<uint32_t>(iov.len);
     cmd.tranfer_type = ODM_XTYPE_OUTBOUND;
     cmd.qid = 0;
@@ -62,7 +65,7 @@ odmHostReadDevice(const xferBenchIOV &iov, void **addr_out, bool *allocated_out)
     const bool ok = ioctl(odm_fd, MRVL_CXL_DMA_READ_COMMAND, &cmd) == 0;
     close(odm_fd);
     if (!ok) {
-        std::cerr << "ODM: consistency: host READ ioctl from IOVA 0x" << std::hex << iov.addr
+        std::cerr << "ODM: consistency: host READ ioctl from IOVA 0x" << std::hex << device_iova
                   << std::dec << " failed: " << strerror(errno) << std::endl;
         free(host);
         *allocated_out = false;

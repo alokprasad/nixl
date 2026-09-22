@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+#include <climits>
 #include <cstring>
 #include <cerrno>
 #include <cstdint>
@@ -329,7 +330,32 @@ nixlOdmEngine::registerMem(const nixlBlobDesc &mem,
     md->dev_id = static_cast<uint32_t>(mem.devId);
 
     if (nixl_mem == DRAM_SEG) {
-        md->dma_addr = mem.addr; /* device-local IOVA */
+        if (mem.addr == 0) {
+            if (mem.len > UINT32_MAX) {
+                NIXL_ERROR << "ODM: DRAM_SEG auto IOVA size " << mem.len
+                           << " exceeds GET_IOVA 32-bit limit";
+                delete md;
+                return NIXL_ERR_INVALID_PARAM;
+            }
+            struct mrvl_dma_iova_commands cmd{};
+            cmd.target_iova_size = static_cast<uint32_t>(mem.len);
+            if (ioctl(dma_fd_, MRVL_CXL_GET_IOVA_COMMAND, &cmd) < 0) {
+                NIXL_ERROR << "ODM: GET_IOVA failed: " << strerror(errno);
+                delete md;
+                return NIXL_ERR_BACKEND;
+            }
+            md->dma_addr = cmd.target_iova_addr;
+            md->iova_allocated = true;
+            {
+                const OdmRegKey key{mem.addr, mem.len, static_cast<uint32_t>(mem.devId)};
+                std::lock_guard<std::mutex> lock(auto_iova_lock_);
+                auto_iova_map_[key] = md->dma_addr;
+            }
+            NIXL_DEBUG << "ODM: auto-allocated device IOVA 0x" << std::hex << md->dma_addr
+                       << std::dec << " size " << mem.len;
+        } else {
+            md->dma_addr = mem.addr; /* caller-supplied host VA or device IOVA */
+        }
     } else if (nixl_mem == VRAM_SEG) {
 #ifdef HAVE_CUDA
         /* SYNC_MEMOPS orders CUDA ops on this buffer against the ODM DMA
@@ -384,6 +410,17 @@ nixlOdmEngine::deregisterMem(nixlBackendMD *meta) {
     if (!md) {
         return NIXL_SUCCESS;
     }
+    if (md->type == DRAM_SEG && md->iova_allocated) {
+        struct mrvl_dma_iova_commands cmd{};
+        cmd.target_iova_addr = md->dma_addr;
+        cmd.target_iova_size = static_cast<uint32_t>(md->size);
+        if (ioctl(dma_fd_, MRVL_CXL_FREE_IOVA_COMMAND, &cmd) < 0) {
+            NIXL_WARN << "ODM: FREE_IOVA failed: " << strerror(errno);
+        }
+        const OdmRegKey key{md->addr, md->size, md->dev_id};
+        std::lock_guard<std::mutex> lock(auto_iova_lock_);
+        auto_iova_map_.erase(key);
+    }
 #ifdef HAVE_CUDA
     if (md->type == VRAM_SEG) {
         for (const auto &pr : md->vram_preexport_chunks) {
@@ -393,6 +430,31 @@ nixlOdmEngine::deregisterMem(nixlBackendMD *meta) {
     }
 #endif
     delete md;
+    return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlOdmEngine::queryMem(const nixl_reg_dlist_t &descs,
+                        std::vector<nixl_query_resp_t> &resp) const {
+    const int n = descs.descCount();
+    resp.resize(n);
+    std::lock_guard<std::mutex> lock(auto_iova_lock_);
+    for (int i = 0; i < n; ++i) {
+        const nixlBlobDesc &mem = descs[i];
+        const OdmRegKey key{mem.addr, mem.len, static_cast<uint32_t>(mem.devId)};
+        const auto it = auto_iova_map_.find(key);
+        if (it != auto_iova_map_.end()) {
+            nixl_b_params_t params;
+            params["device_iova"] = std::to_string(it->second);
+            resp[i] = std::move(params);
+        } else if (mem.addr != 0) {
+            nixl_b_params_t params;
+            params["device_iova"] = std::to_string(mem.addr);
+            resp[i] = std::move(params);
+        } else {
+            resp[i] = std::nullopt;
+        }
+    }
     return NIXL_SUCCESS;
 }
 

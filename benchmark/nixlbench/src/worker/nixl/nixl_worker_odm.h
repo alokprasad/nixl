@@ -25,29 +25,33 @@
 
 #include <nixl.h>
 
+#include "worker/nixl/nixl_mem_region.h"
+
 namespace xferBenchOdm {
 
 struct State {
     std::string device_path_;
-    uint64_t base_addr_ = 0;
-    int iova_fd_ = -1;
-    uint32_t iova_size_ = 0;
-    bool use_get_iova_ = false;
+    uint64_t explicit_base_addr_ = 0; /* non-zero when ODM_ADDR override is set */
 
     void
-    freeIova();
+    seedViaHostWrite(uint64_t device_iova, size_t size, uint8_t pattern);
     void
-    seedViaHostWrite(size_t total_size, uint8_t pattern);
-    uint64_t
-    discoverBaseAddr();
+    seedRegisteredBuffers(const std::vector<NixlMemRegion> &remote_regs,
+                          size_t total_size,
+                          uint8_t pattern);
     void
-    seedDramForRead(size_t total_size);
+    seedDramForRead(const std::vector<NixlMemRegion> &remote_regs, size_t total_size);
+    void
+    resolveDeviceIovas(nixlAgent &agent, nixlBackendH *backend, std::vector<xferBenchIOV> &iovs);
 };
 
 void
 configureBackend(const std::vector<std::string> &devices,
                  State &state,
                  nixl_b_params_t &backend_params);
+
+uint64_t
+explicitBaseAddrFromEnv();
 
 } // namespace xferBenchOdm
 

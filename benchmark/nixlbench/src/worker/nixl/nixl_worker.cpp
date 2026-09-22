@@ -374,7 +374,6 @@ xferBenchNixlWorker::~xferBenchNixlWorker() {
     remote_regs_.clear();
     remote_fds.clear();
     local_regs_.clear();
-    odm_.freeIova();
 
     delete rt;
     rt = nullptr;
@@ -1108,22 +1107,29 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
             remote_regs_.emplace_back(*agent, backend_engine, BLK_SEG, std::move(iov_list));
         }
     } else if (XFERBENCH_BACKEND_MARVELL_ODM == xferBenchConfig::backend) {
-        uint64_t odm_base = odm_.discoverBaseAddr();
-        if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_READ &&
-            xferBenchConfig::check_value < 0) {
-            odm_.seedDramForRead(xferBenchConfig::total_buffer_size);
-        }
+        const std::string &odm_dev =
+            odm_.device_path_.empty() ? xferBenchConfig::odm_device_path : odm_.device_path_;
+        xferBenchConfig::odm_device_path = odm_dev;
+        const uint64_t odm_base = odm_.explicit_base_addr_;
         for (int list_idx = 0; list_idx < num_threads; list_idx++) {
             std::vector<xferBenchIOV> iov_list;
             for (i = 0; i < num_devices; i++) {
-                uint64_t dev_addr = odm_base + (list_idx * num_devices + i) * buffer_size;
+                const uint64_t dev_addr =
+                    odm_base != 0 ?
+                    (odm_base + static_cast<uint64_t>(list_idx * num_devices + i) * buffer_size) :
+                    0;
                 iov_list.emplace_back(dev_addr, buffer_size, 0);
             }
             nixl_reg_dlist_t desc_list = iovListToNixlRegDlist(iov_list, DRAM_SEG);
             CHECK_NIXL_ERROR(agent->registerMem(desc_list, &opt_args), "registerMem ODM failed");
+            odm_.resolveDeviceIovas(*agent, backend_engine, iov_list);
             // Device IOVA is not heap-allocated; do not free on teardown.
             remote_regs_.emplace_back(
                 *agent, backend_engine, DRAM_SEG, std::move(iov_list), false);
+        }
+        if (xferBenchConfig::check_consistency && xferBenchConfig::op_type == XFERBENCH_OP_READ &&
+            xferBenchConfig::check_value < 0) {
+            odm_.seedDramForRead(remote_regs_, xferBenchConfig::total_buffer_size);
         }
     } else if (xferBenchConfig::isStorageBackend()) {
         int num_buffers = num_threads * num_devices;
@@ -1271,7 +1277,6 @@ xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &io
 
     local_regs_.clear();
     iov_lists.clear();
-    odm_.freeIova();
 }
 
 int

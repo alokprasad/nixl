@@ -9,8 +9,9 @@ using the ODM DMA controller. Two transfer modes are supported:
 | host-VA | `DRAM_SEG` <-> `DRAM_SEG` | `READ/WRITE_COMMAND` | No |
 
 For the host-VA path, **local** `DRAM_SEG` is host DRAM (userspace virtual
-address) and **remote** `DRAM_SEG` is Structera device DRAM (IOVA from
-`GET_IOVA` or `ODM_ADDR`):
+address) and **remote** `DRAM_SEG` is Structera device DRAM. Register remote
+`DRAM_SEG` with `addr=0` to auto-allocate device IOVA inside the plugin; any
+other address is treated as caller-supplied host VA or pre-allocated IOVA:
 
 - **WRITE**: host DRAM -> device DRAM
 - **READ**: device DRAM -> host DRAM
@@ -37,12 +38,10 @@ Disable with `-Ddisable_odm_backend=true`.
 
 ## Addressing
 
-DMA targets use mailbox-allocated IOVA from `GET_IOVA` on `/dev/odm0`. Override
-with the `ODM_ADDR` environment variable when `GET_IOVA` is unavailable:
-
-```bash
-export ODM_ADDR=0x800000000
-```
+Device DRAM registrations use mailbox-allocated IOVA from `GET_IOVA` on
+`/dev/odm0` when registered with `addr=0`. The plugin frees IOVA on
+`deregisterMem`. For debugging or fixed layouts, register with an explicit IOVA
+or set `ODM_ADDR` in nixlbench (advanced override).
 
 ## io_uring / SQE128
 
@@ -74,7 +73,6 @@ VRAM -> device DRAM (dma-buf path):
 ```bash
 export LD_LIBRARY_PATH=build/src/core:build/src/plugins/marvell_odm
 export NIXL_PLUGIN_DIR=build/src/plugins/marvell_odm
-export ODM_ADDR=0x800000000
 
 ./nixlbench --backend MARVELL_ODM \
   --initiator_seg_type VRAM --target_seg_type DRAM \
@@ -93,12 +91,11 @@ See `benchmark/nixlbench/marvell_odm/README.md` for sweep examples and TOML conf
 ninja -C build test/unit/plugins/marvell_odm/marvell_odm_nixl_test
 
 # Hardware round-trip (requires /dev/odm0 and CUDA GPU):
-./build/test/unit/plugins/marvell_odm/marvell_odm_nixl_test \
-  --device odm0 --odm-addr 0x800000000
+./build/test/unit/plugins/marvell_odm/marvell_odm_nixl_test --device odm0
 
 # With io_uring:
 ./build/test/unit/plugins/marvell_odm/marvell_odm_nixl_test \
-  --device odm0 --odm-addr 0x800000000 --odm_use_io_uring \
+  --device odm0 --odm_use_io_uring \
   --odm_qid_start 0 --odm_qid_end 15
 ```
 
