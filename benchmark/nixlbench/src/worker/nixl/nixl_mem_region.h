@@ -100,8 +100,9 @@ private:
 };
 
 // Per-IOV cleanup for the given segment type; no-op for types that own nothing.
+// owns_buffer=false for externally mapped addresses (e.g. ODM device IOVA).
 void
-cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov);
+cleanupIov(nixl_mem_t seg_type, xferBenchIOV &iov, bool owns_buffer = true);
 
 // RAII wrapper around a NIXL memory registration: deregisters the memory and
 // runs the per-IOV cleanup on destruction.
@@ -111,12 +112,14 @@ class NixlMemRegion {
     nixl_mem_t seg_type_ = DRAM_SEG;
     std::vector<xferBenchIOV> iovs_;
     nixl_opt_args_t cached_opt_args_;
+    bool iov_owns_buffer_ = true;
 
 public:
     NixlMemRegion(nixlAgent &agent,
                   nixlBackendH *backend,
                   nixl_mem_t seg_type,
-                  std::vector<xferBenchIOV> iovs);
+                  std::vector<xferBenchIOV> iovs,
+                  bool iov_owns_buffer = true);
     ~NixlMemRegion();
     NixlMemRegion(NixlMemRegion &&o) noexcept;
     // Move-only; a reference member makes the region non-assignable, which is
